@@ -773,4 +773,45 @@ mod tests {
         .await;
         assert_eq!(st, StatusCode::NOT_FOUND);
     }
+
+    /// Prueba de los paquetes reales de `tools/`: instala un módulo publicado en un servidor HTTP
+    /// local con la misma estructura que las Releases. Ver `docs/prueba-fase1.md`.
+    /// `NETCTL_PRUEBA_URL=http://127.0.0.1:8000/ NETCTL_PRUEBA_CLAVE=clave.pub
+    /// NETCTL_PRUEBA_MODULO=wireguard cargo test -p netctl-core -- --ignored paquete_real`
+    #[tokio::test]
+    #[ignore = "necesita un servidor local con paquetes de tools/empaquetar-modulo.sh"]
+    async fn paquete_real_desde_servidor_local() {
+        let var = |n: &str| std::env::var(n).unwrap_or_else(|_| panic!("falta {n}"));
+        let id = var("NETCTL_PRUEBA_MODULO");
+        let clave =
+            catalogo::leer_clave(&std::fs::read_to_string(var("NETCTL_PRUEBA_CLAVE")).unwrap())
+                .expect("clave pública no válida");
+        let d = tempfile::tempdir().unwrap();
+        let (g, doble) = gestor(d.path(), &var("NETCTL_PRUEBA_URL"), Some(clave));
+        let cat = g.catalogo().await.expect("catálogo");
+        assert!(cat.modulos.iter().any(|e| e.id == id), "{cat:?}");
+        // systemd es un doble: un módulo falso responde a /salud en el socket.
+        let _m = modulo_falso(&g.rutas().socket(&id)).await;
+        g.instalar(&id).await.expect("instalar");
+        let bin = g.rutas().binario(&id);
+        let meta = std::fs::metadata(&bin).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert!(
+            meta.permissions().mode() & 0o111 != 0,
+            "binario sin permiso de ejecución"
+        );
+        assert_eq!(&std::fs::read(&bin).unwrap()[..4], b"\x7fELF");
+        assert!(g.rutas().dir_modulo(&id).join("ui/index.js").is_file());
+        assert!(g.rutas().unidad(&id).is_file());
+        assert_eq!(g.instalados()[0].id, id);
+        let llamadas = doble.llamadas();
+        assert!(
+            llamadas.contains(&format!("enable --now netctl-mod-{id}.service")),
+            "{llamadas:?}"
+        );
+        eprintln!(
+            "instalado {id} ({} bytes); systemd: {llamadas:?}",
+            meta.len()
+        );
+    }
 }

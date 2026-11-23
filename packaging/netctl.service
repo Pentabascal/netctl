@@ -1,0 +1,18 @@
+[Unit]
+Description=netctl: panel de administración del servidor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/netctl-core serve
+Restart=on-failure
+RestartSec=2
+PrivateTmp=yes
+ProtectHome=yes
+RuntimeDirectory=netctl
+RuntimeDirectoryPreserve=yes
+StateDirectory=netctl
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

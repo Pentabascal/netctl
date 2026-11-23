@@ -5,3 +5,4 @@ web/kit/dist/
 modules/*/ui/dist/
 # enlace a web/node_modules que crea el build de la UI de cada módulo
 modules/*/ui/node_modules
+/dist/

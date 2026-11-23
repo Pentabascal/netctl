@@ -1,0 +1,6 @@
+#!/bin/sh
+# prerm del .deb de netctl: al desinstalar se para el panel (los módulos siguen).
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl disable --now netctl.service >/dev/null 2>&1 || true
+fi

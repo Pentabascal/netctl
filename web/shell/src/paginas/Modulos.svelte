@@ -4,7 +4,7 @@
   import { sesion, cargarModulos } from '../sesion.svelte.js';
   import { estadoModulo } from '../estado.js';
 
-  const COMANDO_NUCLEO = 'curl -fsSL https://raw.githubusercontent.com/Pentabascal/netctl/main/install.sh | sudo sh';
+  const COMANDO_NUCLEO = 'curl -fsSL https://raw.githubusercontent.com/Pentabascal/netctl/master/install.sh | sudo sh';
 
   let pestana = $state('instalados');
   let catalogo = $state(null);

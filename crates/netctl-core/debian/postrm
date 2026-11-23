@@ -1,0 +1,7 @@
+#!/bin/sh
+# postrm del .deb de netctl. Los datos de /var/lib/netctl y /etc/netctl se conservan
+# (también con purge) porque contienen las claves de los módulos.
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi

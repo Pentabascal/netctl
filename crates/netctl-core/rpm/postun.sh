@@ -1,0 +1,5 @@
+#!/bin/sh
+# %postun del .rpm de netctl.
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
