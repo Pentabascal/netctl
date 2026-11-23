@@ -1,1 +1,5 @@
 /target
+node_modules/
+web/shell/dist/
+web/kit/dist/
+modules/*/ui/dist/

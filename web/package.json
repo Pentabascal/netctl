@@ -1,0 +1,12 @@
+{
+  "name": "netctl-web",
+  "private": true,
+  "workspaces": [
+    "kit",
+    "shell",
+    "../modules/*/ui"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present"
+  }
+}

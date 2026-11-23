@@ -1,0 +1,180 @@
+/* Tema oscuro de netctl, estilo UniFi Network.
+   Colores tomados de apps/wg-configurador/src/ui_kit.rs para que el panel y la app de
+   escritorio se vean igual. Los módulos usan solo estas variables. */
+
+:root {
+  --fondo: #141619;
+  --fondo-lateral: #0f1114;
+  --superficie: #1d2024;
+  --superficie-2: #23272c;
+  --campo: #16181c;
+  --hover: #262a30;
+  --borde: #2e3238;
+  --borde-suave: #25292e;
+  --borde-fuerte: #464c54;
+  --codigo: #101215;
+
+  --texto: #e4e7eb;
+  --texto-2: #8c94a0;
+  --texto-3: #626a75;
+
+  --azul: #4096ff;
+  --azul-hover: #5aa5ff;
+  --azul-tinte: #162e52;
+  --verde: #46cd7d;
+  --verde-tinte: #143624;
+  --rojo: #ff5f64;
+  --rojo-tinte: #481a1e;
+  --ambar: #f5b041;
+  --ambar-tinte: #47361a;
+  --morado: #af91ff;
+  --morado-tinte: #2e2452;
+
+  --radio: 8px;
+  --radio-pq: 6px;
+  --sombra: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --alto-campo: 34px;
+  --ancho-lateral: 64px;
+  --alto-cabecera: 56px;
+
+  --fuente: 'Inter', 'Lato', -apple-system, 'Segoe UI', 'Noto Sans', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--fondo);
+  color: var(--texto);
+  font-family: var(--fuente);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--azul);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+h1 {
+  font-size: 20px;
+}
+h2 {
+  font-size: 16px;
+}
+h3 {
+  font-size: 14px;
+}
+
+p {
+  margin: 0;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+code {
+  background: var(--codigo);
+  border: 1px solid var(--borde-suave);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+::selection {
+  background: var(--azul-tinte);
+}
+
+:focus-visible {
+  outline: 2px solid var(--azul);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--borde);
+  border-radius: 10px;
+  border: 2px solid var(--fondo);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Utilidades pequeñas que pueden usar los módulos. */
+.nc-texto-2 {
+  color: var(--texto-2);
+}
+.nc-texto-3 {
+  color: var(--texto-3);
+}
+.nc-rejilla {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+.nc-fila {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nc-pila {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.nc-separador {
+  flex: 1;
+}
+.nc-seccion {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--texto-2);
+  margin: 0 0 10px;
+}
+.nc-pagina {
+  padding: 24px 28px 96px;
+  max-width: 1360px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+@media (max-width: 720px) {
+  .nc-pagina {
+    padding: 16px 14px 96px;
+    gap: 18px;
+  }
+}

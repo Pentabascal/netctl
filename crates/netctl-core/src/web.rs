@@ -6,7 +6,7 @@ use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 
 #[derive(rust_embed::RustEmbed)]
-#[folder = "$CARGO_MANIFEST_DIR/../../web/shell/dist"]
+#[folder = "../../web/shell/dist"]
 #[allow_missing = true]
 struct Carcasa;
 

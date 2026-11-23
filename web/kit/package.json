@@ -1,0 +1,23 @@
+{
+  "name": "@netctl/kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kit visual de netctl (tema oscuro estilo UniFi): componentes Svelte 5, tema.css y cliente de la API",
+  "svelte": "./src/index.js",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./tema.css": "./src/tema.css",
+    "./api.js": "./src/api.js",
+    "./iconos.js": "./src/iconos.js"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
+  }
+}
