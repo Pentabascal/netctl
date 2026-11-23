@@ -29,6 +29,9 @@ módulos se descargan e instalan desde las Releases del repo**.
 - Módulo **WireGuard**: todo lo de wg-configurador + lista de clientes en vivo
   (conectado / no conectado) + edición en caliente.
 - Módulo **Firewall** estilo UniFi (firewall por zonas con matriz zona→zona).
+- Módulo **Router**: enrutamiento como tal (interfaces/VLAN, rutas, rutas por
+  política, multi-WAN, OSPF/BGP/RIP, QoS). Sin servicios tipo DHCP/DNS.
+- Módulo **Seguridad**: IDS/IPS y protección de amenazas.
 - Funciona igual en Debian 12+, Ubuntu 22.04+, openSUSE Leap 15.6 / SLES 15,
   RHEL / Rocky / Alma 9+ y Fedora actual.
 
@@ -40,10 +43,36 @@ módulos se descargan e instalan desde las Releases del repo**.
 - Integración con LinuxServerPanel.
 - Módulos de terceros (solo se aceptan módulos firmados con la clave del
   proyecto).
-- Horarios en reglas de firewall, IDS/IPS, filtrado por aplicación/DPI (cosas
-  de UniFi que quedan fuera de la v1).
+- Horarios en reglas de firewall y filtrado por aplicación/DPI.
+- Servicios de red en el módulo Router: DHCP, DNS, DNS dinámico, UPnP
+  (decisión del usuario: «un router como tal»).
+
+## 3b. Principios (lo más importante para el usuario)
+
+El usuario pidió que **todo esté bien dividido para que nada se sobresature, que
+sea bonito de ver y fácil de configurar**. Esto manda sobre cualquier otra
+decisión de detalle:
+
+- **Bien dividido en el sistema:** cada función es un módulo y un proceso aparte;
+  un módulo pesado (Suricata) no frena a los demás. Cada unidad systemd de
+  módulo lleva límites de recursos (`MemoryMax`, `CPUWeight`) y el núcleo
+  muestra en Inicio el consumo de CPU y memoria de cada módulo.
+- **Bien dividido en la interfaz:** ninguna pantalla intenta hacerlo todo. Cada
+  módulo tiene pocas entradas en la barra lateral y cada página, pestañas
+  claras. Lo habitual va a la vista; lo avanzado, plegado en «Avanzado». Los
+  detalles se editan en el panel lateral, no en páginas largas.
+- **Fácil de configurar:** valores por defecto que funcionan sin tocar nada;
+  asistentes para lo primero que hace cada módulo (primer servidor WireGuard,
+  asignar interfaces a zonas, configurar WAN, activar IPS); validación en el
+  formulario con mensajes en castellano llano; vista previa de lo que va a
+  cambiar antes de aplicar.
+- **Bonito:** estética UniFi Network cuidada (espaciado, iconos de línea,
+  tarjetas con métricas, gráficas de tráfico, estados con color) y coherente
+  en todos los módulos gracias al kit compartido.
 
 ## 4. Anti-objetivos (fallo aunque «funcione»)
+
+- Pantallas saturadas de opciones o un módulo que haga demasiadas cosas.
 
 - **Quedarse fuera del servidor** por aplicar una regla de firewall mala.
 - **Desconectar a todos los clientes VPN** por editar uno.
@@ -282,12 +311,51 @@ netctl/
   administrador aleatoria y la muestra una vez. Se puede cambiar con
   `netctl-core admin set-password`.
 
+## 9c. Módulo Router (fase 3)
+
+Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
+
+- **Interfaces:** WAN (DHCP cliente, IP fija, PPPoE), LAN y VLAN; cada una se
+  asigna a una zona del Firewall. Las interfaces que gestiona el módulo se
+  configuran directamente con iproute2 desde su servicio y se marcan como no
+  gestionadas en el gestor de red de la distro (NetworkManager, ifupdown /
+  netplan, wicked); las demás no se tocan. *Decisión de Claude, para que
+  funcione igual en las tres familias.*
+- **Tabla de rutas** en vivo y **rutas estáticas**.
+- **Rutas por política** (origen, destino, puerto → conexión o VPN) con tablas
+  de rutas + marcas de nftables.
+- **Multi-WAN:** conmutación por caída (sondeo de salud por WAN) o reparto de
+  carga.
+- **Enrutamiento dinámico** OSPF, BGP y RIP con FRR: vecinos, estado de
+  sesiones, rutas aprendidas. Pestaña propia, plegada por defecto.
+- **QoS:** límites de ancho de banda por red/dispositivo y control de latencia
+  (CAKE / fq_codel con `tc`).
+- NAT y reenvío de puertos siguen en el Firewall.
+- Cambios de red con el «aplicar con confirmación» de 60 s.
+
+## 9d. Módulo Seguridad (fase 4)
+
+- **IDS/IPS con Suricata**: modo detección (avisa) o prevención (bloquea),
+  el tráfico entra por una cola de nftables (NFQUEUE) en las zonas que se
+  elijan. En RHEL/Rocky/Alma requiere activar EPEL (el manifiesto lo
+  indica).
+- Categorías de amenazas activables, lista de excepciones, actualización
+  automática de reglas.
+- **Amenazas detectadas:** IP, país, regla; bloquear o ignorar con un clic.
+- **Bloqueo por país (GeoIP)** y **listas de IPs maliciosas** que se actualizan
+  solas (sets de nftables).
+- Mostrar el impacto en CPU y avisar si la máquina no da para el tráfico.
+
 ## 10. Fases
 
 1. **Fase 1:** workspace, `wg-modelo` extraído, núcleo (login, carcasa, kit,
    gestor de módulos, catálogo firmado), herramientas de publicación, módulo
    WireGuard completo.
 2. **Fase 2:** módulo Firewall.
+3. **Fase 3:** módulo Router.
+4. **Fase 4:** módulo Seguridad.
+
+Cada fase tiene su propio plan; las fases 3 y 4 se detallan al llegar a ellas.
 
 Las pruebas reales en Debian, openSUSE y Rocky las hace **el usuario**. Quien
 lo construya entrega tests automáticos (unitarios: generación de reglas
