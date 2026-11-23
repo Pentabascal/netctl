@@ -32,8 +32,10 @@ el target `x86_64-unknown-linux-musl` (`rustup target add x86_64-unknown-linux-m
 curl -fsSL https://raw.githubusercontent.com/Pentabascal/netctl/master/install.sh | sudo sh
 ```
 
-Al final muestra `Panel: https://<IP>:8443`, el usuario `admin` y la contraseña (solo esa
-vez). Si la pierdes: `sudo netctl-core admin reset-password`. Al actualizar no se cambia.
+Al final muestra `Panel: https://<IP>:8443`. Usuario `admin`, contraseña de fábrica `root`:
+el panel avisa hasta que la cambies en Ajustes, y no deja abrirlo a Internet con ella.
+Si la pierdes: `sudo netctl-core admin password-defecto` (vuelve a `root`) o
+`sudo netctl-core admin reset-password` (una aleatoria). Al actualizar no se cambia.
 
 Comprueba: `systemctl status netctl` activo. Si el cortafuegos de la distro bloquea el 8443:
 openSUSE `firewall-cmd --add-port=8443/tcp --permanent && firewall-cmd --reload`

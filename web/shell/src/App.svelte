@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { EVENTO_SESION_CADUCADA, Vacio, Boton } from '@netctl/kit';
+  import { EVENTO_SESION_CADUCADA, Vacio, Boton, Aviso } from '@netctl/kit';
   import { sesion, cargarYo, cerrarLocal } from './sesion.svelte.js';
   import { ruta, analizar } from './ruta.svelte.js';
   import Lateral from './Lateral.svelte';
@@ -40,6 +40,14 @@
     <div class="principal">
       <Cabecera />
       <main>
+        {#if sesion.yo.password_defecto && !(vista.pagina === 'ajustes')}
+          <div class="aviso-defecto">
+            <Aviso tipo="aviso" titulo="Estás usando la contraseña de fábrica («root»)">
+              Cualquiera que la conozca puede entrar. Cámbiala antes de seguir.
+              {#snippet acciones()}<Boton variante="primario" href="/ajustes/password">Cambiar contraseña</Boton>{/snippet}
+            </Aviso>
+          </div>
+        {/if}
         {#key vista.pagina === 'modulo' ? `m:${vista.id}` : vista.pagina}
           {#if vista.pagina === 'inicio'}
             <Inicio />
@@ -63,6 +71,16 @@
 {/if}
 
 <style>
+  .aviso-defecto {
+    padding: 24px 28px 0;
+    max-width: 1360px;
+    margin: 0 auto;
+  }
+  @media (max-width: 720px) {
+    .aviso-defecto {
+      padding: 16px 14px 0;
+    }
+  }
   .arranque {
     height: 100vh;
     display: grid;

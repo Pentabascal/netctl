@@ -56,6 +56,9 @@ impl Sesion {
     }
 }
 
+/// Contraseña de fábrica del usuario «admin».
+pub const PASSWORD_DEFECTO: &str = "root";
+
 /// Lo que se guarda en `admin.json` (0600).
 #[derive(Serialize, Deserialize, Default)]
 struct Datos {
@@ -67,6 +70,9 @@ struct Datos {
     /// Sube con cada cambio de credenciales; invalida las sesiones anteriores.
     #[serde(default)]
     generacion: u64,
+    /// La contraseña es la de fábrica («root»): el panel avisa y no deja abrir a Internet.
+    #[serde(default)]
+    password_defecto: bool,
 }
 
 #[derive(Default)]
@@ -220,6 +226,20 @@ impl Almacen {
 
     /// Cambia la contraseña y cierra todas las sesiones.
     pub fn fijar_password(&self, password: &str) -> Result<()> {
+        self.fijar_password_marcada(password, false)
+    }
+
+    /// Pone la contraseña de fábrica («root») y la marca como tal.
+    pub fn fijar_password_defecto(&self) -> Result<()> {
+        self.fijar_password_marcada(PASSWORD_DEFECTO, true)
+    }
+
+    /// `true` si sigue la contraseña de fábrica.
+    pub fn usa_password_defecto(&self) -> bool {
+        self.datos.lock().unwrap().password_defecto
+    }
+
+    fn fijar_password_marcada(&self, password: &str, defecto: bool) -> Result<()> {
         if password.is_empty() {
             anyhow::bail!("La contraseña no puede estar vacía");
         }
@@ -227,9 +247,11 @@ impl Almacen {
         self.recargar();
         let mut d = self.datos.lock().unwrap();
         let anterior = d.password.replace(hash);
+        let defecto_anterior = std::mem::replace(&mut d.password_defecto, defecto);
         d.generacion += 1;
         if let Err(e) = self.guardar(&d) {
             d.password = anterior;
+            d.password_defecto = defecto_anterior;
             d.generacion -= 1;
             return Err(e);
         }
@@ -425,6 +447,19 @@ impl Almacen {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn password_defecto_se_marca_y_se_quita() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = Almacen::abrir(&dir.path().join("admin.json")).unwrap();
+        a.fijar_password_defecto().unwrap();
+        assert!(a.usa_password_defecto());
+        assert!(a.comprobar_password("root"));
+        a.fijar_password("otra-clave-larga").unwrap();
+        assert!(!a.usa_password_defecto());
+        let b = Almacen::abrir(&dir.path().join("admin.json")).unwrap();
+        assert!(!b.usa_password_defecto());
+    }
+
     use super::*;
 
     fn almacen() -> (tempfile::TempDir, Almacen) {

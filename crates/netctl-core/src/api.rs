@@ -252,6 +252,7 @@ async fn yo(State(e): State<Compartido>, Extension(s): Extension<Sesion>) -> Res
         "usuario": USUARIO,
         "csrf": s.csrf,
         "totp_activo": e.auth.totp_activo(),
+        "password_defecto": e.auth.usa_password_defecto(),
         "alcance": e.alcance(),
         "version": env!("CARGO_PKG_VERSION"),
     }))
@@ -277,6 +278,9 @@ struct PeticionAcceso {
 async fn cambiar_acceso(State(e): State<Compartido>, Json(p): Json<PeticionAcceso>) -> Response {
     if p.alcance == Alcance::Internet && !e.auth.totp_activo() {
         return error(StatusCode::CONFLICT, "Activa primero el doble factor");
+    }
+    if p.alcance == Alcance::Internet && e.auth.usa_password_defecto() {
+        return error(StatusCode::CONFLICT, "Cambia primero la contraseña de fábrica");
     }
     let anterior = e.alcance();
     if p.alcance == anterior {

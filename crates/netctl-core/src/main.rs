@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use axum_server::tls_rustls::RustlsConfig;
 use ipnet::IpNet;
-use netctl_core::alcance;
+use netctl_core::{alcance, auth};
 use netctl_core::api::{self, Estado};
 use netctl_core::auth::Almacen;
 use netctl_core::config::{Alcance, Config, RUTA_CONFIG};
@@ -20,6 +20,7 @@ const AYUDA: &str = "Uso:
   netctl-core serve                    Arranca el panel
   netctl-core admin set-password       Cambia la contraseña del administrador
   netctl-core admin reset-password     Pone una contraseña aleatoria y la muestra una vez
+  netctl-core admin password-defecto   Vuelve a la contraseña de fábrica («root»)
   netctl-core admin quitar-totp        Quita el doble factor y vuelve al acceso solo LAN
 
 La configuración se lee de /etc/netctl/core.toml (o de NETCTL_CONFIG).";
@@ -53,6 +54,12 @@ fn main() -> Result<()> {
             let p = password_aleatoria();
             almacen(&c)?.fijar_password(&p)?;
             println!("Contraseña nueva del usuario «admin» (no se volverá a mostrar): {p}");
+            Ok(())
+        }
+        ["admin", "password-defecto"] => {
+            let c = Config::cargar(&ruta)?;
+            almacen(&c)?.fijar_password_defecto()?;
+            println!("Contraseña del usuario «admin» puesta a «{}». Cámbiala desde Ajustes.", auth::PASSWORD_DEFECTO);
             Ok(())
         }
         ["admin", "quitar-totp"] => {

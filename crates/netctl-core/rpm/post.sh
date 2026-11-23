@@ -6,7 +6,7 @@ install -d -m 700 /var/lib/netctl
 chmod 700 /var/lib/netctl
 # Solo si aún no hay contraseña: nunca se regenera al actualizar.
 if ! grep -qs 'argon2' /var/lib/netctl/admin.json; then
-    /usr/bin/netctl-core admin reset-password
+    /usr/bin/netctl-core admin password-defecto
     echo "Entra en https://<IP-del-servidor>:8443 con el usuario «admin»."
 fi
 if [ -d /run/systemd/system ]; then

@@ -83,12 +83,11 @@ command -v netctl-core >/dev/null 2>&1 || [ -x /usr/bin/netctl-core ] || fallo "
 IP=$(hostname -I 2>/dev/null | cut -d' ' -f1 || true)
 echo
 echo "netctl instalado. Panel: https://${IP:-<IP-del-servidor>}:8443"
-LINEA=$(grep 'Contraseña nueva del usuario' "$SALIDA" | tail -n 1 || true)
-if [ -n "$LINEA" ]; then
+if grep -q 'Contraseña del usuario «admin» puesta' "$SALIDA"; then
     echo "Usuario: admin"
-    echo "Contraseña: ${LINEA#*: }"
-    echo "Apúntala: no se volverá a mostrar."
+    echo "Contraseña: root"
+    echo "Cámbiala en Ajustes nada más entrar."
 else
     echo "Ya había contraseña de administrador (actualización); se conserva."
-    echo "Si la olvidaste: sudo netctl-core admin reset-password"
+    echo "Si la olvidaste: sudo netctl-core admin password-defecto  (vuelve a «root»)"
 fi
