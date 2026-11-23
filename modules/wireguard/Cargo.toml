@@ -1,6 +1,6 @@
 [package]
 name = "netctl-mod-wireguard"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 description = "Módulo WireGuard de netctl: servidor, clientes con permisos y estado en vivo"
 

@@ -6,10 +6,14 @@ use serde::Serialize;
 
 /// Un cliente cuenta como conectado si su último saludo fue hace menos de esto.
 pub const CONECTADO_SEGUNDOS: u64 = 180;
+/// Además del saludo, hace falta haber recibido algo del cliente en esta ventana. Con el
+/// keepalive por defecto (25 s) un cliente conectado envía al menos un paquete cada 25 s,
+/// así que una desconexión se detecta en ~40 s en vez de esperar a que caduque el saludo.
+pub const ACTIVIDAD_SEGUNDOS: u64 = 40;
 /// Cada cuánto se consulta `wg show`.
-pub const INTERVALO_SEGUNDOS: u64 = 5;
-/// Muestras de tráfico que se guardan para la gráfica (5 min a 5 s).
-pub const HISTORIAL: usize = 60;
+pub const INTERVALO_SEGUNDOS: u64 = 2;
+/// Muestras de tráfico que se guardan para la gráfica (5 min a 2 s).
+pub const HISTORIAL: usize = 150;
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
 pub struct EstadoPeer {
@@ -22,6 +26,8 @@ pub struct EstadoPeer {
     pub rx: u64,
     pub tx: u64,
     pub conectado: bool,
+    /// Último instante en que se recibió algo del cliente (o su último saludo).
+    pub ultima_actividad: Option<u64>,
     /// Bytes por segundo desde la muestra anterior.
     pub tasa_rx: u64,
     pub tasa_tx: u64,
@@ -99,15 +105,24 @@ impl Vivo {
         let dt = ahora.saturating_sub(self.momento);
         let mut peers = parsear_dump(&salida, ahora);
         let (mut total_rx, mut total_tx) = (0, 0);
-        if mismo && self.activa && dt > 0 {
-            for p in &mut peers {
-                if let Some(a) = self.peer(&p.clave_publica) {
-                    p.tasa_rx = p.rx.saturating_sub(a.rx) / dt;
-                    p.tasa_tx = p.tx.saturating_sub(a.tx) / dt;
-                }
-                total_rx += p.tasa_rx;
-                total_tx += p.tasa_tx;
+        let continua = mismo && self.activa;
+        for p in &mut peers {
+            let anterior = if continua { self.peer(&p.clave_publica) } else { None };
+            let mut actividad = match anterior {
+                Some(a) if a.rx != p.rx => Some(ahora),
+                Some(a) => a.ultima_actividad,
+                None => None,
+            };
+            actividad = actividad.max(p.ultimo_handshake);
+            p.ultima_actividad = actividad;
+            p.conectado = p.conectado
+                && actividad.is_some_and(|t| ahora.saturating_sub(t) < ACTIVIDAD_SEGUNDOS);
+            if let (Some(a), true) = (anterior, dt > 0) {
+                p.tasa_rx = p.rx.saturating_sub(a.rx) / dt;
+                p.tasa_tx = p.tx.saturating_sub(a.tx) / dt;
             }
+            total_rx += p.tasa_rx;
+            total_tx += p.tasa_tx;
         }
         historial.push_back(Muestra {
             t: ahora,
@@ -167,6 +182,34 @@ mod tests {
         assert_eq!(v[0].ultimo_handshake, None);
         assert_eq!(v[0].endpoint, None);
         assert!(!v[0].conectado);
+    }
+
+    fn con_rx(handshake: u64, rx: u64) -> String {
+        format!("x\ty\t1\toff\nQUJD\t(none)\t1.2.3.4:5\t10.8.0.2/32\t{handshake}\t{rx}\t0\toff\n")
+    }
+
+    #[test]
+    fn desconexion_se_detecta_sin_trafico() {
+        // Saludo hace 10 s y luego el cliente deja de enviar (se desconectó).
+        let mut v = Vivo::default().siguiente("wg0", Ok(con_rx(AHORA - 10, 500)), AHORA);
+        assert!(v.peers[0].conectado);
+        v = v.siguiente("wg0", Ok(con_rx(AHORA - 10, 500)), AHORA + 20);
+        assert!(v.peers[0].conectado, "aún dentro de la ventana");
+        v = v.siguiente("wg0", Ok(con_rx(AHORA - 10, 500)), AHORA + 35);
+        assert!(!v.peers[0].conectado, "45 s sin nada: desconectado aunque el saludo sea reciente");
+    }
+
+    #[test]
+    fn keepalive_mantiene_conectado() {
+        let mut v = Vivo::default().siguiente("wg0", Ok(con_rx(AHORA - 10, 500)), AHORA);
+        for (i, rx) in [(25u64, 532u64), (50, 564), (75, 596), (100, 628)] {
+            v = v.siguiente("wg0", Ok(con_rx(AHORA - 10, rx)), AHORA + i);
+            assert!(v.peers[0].conectado, "t+{i}");
+        }
+        // El saludo caduca (180 s) aunque haya tráfico: WireGuard renegocia antes, así que
+        // sin saludo nuevo no cuenta como conectado.
+        v = v.siguiente("wg0", Ok(con_rx(AHORA - 10, 700)), AHORA + 200);
+        assert!(!v.peers[0].conectado);
     }
 
     #[test]
