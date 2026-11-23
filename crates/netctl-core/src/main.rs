@@ -148,8 +148,16 @@ async fn servir(ruta: &Path) -> Result<()> {
         auth,
         redes_wg_cacheadas(),
     ));
+    let mut rutas = Rutas::sistema(&estado.config.read().unwrap().datos);
+    // Solo para desarrollo (pruebas visuales sin root): carpeta de módulos y de sockets.
+    if let Some(d) = std::env::var_os("NETCTL_DIR_MODULOS").filter(|v| !v.is_empty()) {
+        rutas.modulos = d.into();
+    }
+    if let Some(d) = std::env::var_os("NETCTL_DIR_RUN").filter(|v| !v.is_empty()) {
+        rutas.run = d.into();
+    }
     let gestor = Arc::new(Gestor::new(
-        Rutas::sistema(&estado.config.read().unwrap().datos),
+        rutas,
         Arc::new(SystemdReal),
         catalogo::URL_BASE,
         catalogo::clave_publica(),

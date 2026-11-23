@@ -1,0 +1,19 @@
+{
+  "name": "@netctl/mod-wireguard-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz web del módulo WireGuard de netctl (se carga en la carcasa con mount())",
+  "//": "Está fuera de web/: enlaza web/node_modules (npm workspaces no lo crea aquí). Compilar desde web/ con npm run build.",
+  "scripts": {
+    "build": "ln -sfn ../../../web/node_modules node_modules && vite build"
+  },
+  "dependencies": {
+    "@netctl/kit": "0.1.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "svelte": "^5.59.1",
+    "vite": "^8.3.8"
+  }
+}
