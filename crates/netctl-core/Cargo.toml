@@ -16,6 +16,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 if-addrs = "0.13"
+libc = "0.2"
 ipnet.workspace = true
 minisign-verify = "0.2"
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
@@ -34,6 +35,7 @@ toml = "0.8"
 totp-rs = "5"
 
 [dev-dependencies]
+futures-util = "0.3"
 minisign = "0.7"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

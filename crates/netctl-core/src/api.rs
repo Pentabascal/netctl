@@ -385,14 +385,14 @@ async fn cambiar_password(
     }
     let r = tokio::task::spawn_blocking(move || {
         if !e.auth.comprobar_password(&p.actual) {
-            return Err(error(
+            return Err((
                 StatusCode::FORBIDDEN,
-                "La contraseña actual no es correcta",
+                "La contraseña actual no es correcta".to_string(),
             ));
         }
         e.auth
             .fijar_password(&p.nueva)
-            .map_err(|err| error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")))
+            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")))
     })
     .await;
     match r {
@@ -402,7 +402,7 @@ async fn cambiar_password(
                 .insert(header::SET_COOKIE, cookie_sesion("", Some(0)));
             r
         }
-        Ok(Err(r)) => r,
+        Ok(Err((codigo, mensaje))) => error(codigo, mensaje),
         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Error interno"),
     }
 }

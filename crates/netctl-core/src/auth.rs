@@ -238,12 +238,12 @@ impl Almacen {
     ) -> Result<Sesion, ErrorLogin> {
         let ip = clave_ip(ip);
         self.recargar();
-        if let Some(hasta) = self.intentos.lock().unwrap().get(&ip).and_then(|i| i.hasta) {
-            if hasta > ahora {
-                return Err(ErrorLogin::Bloqueado {
-                    segundos: (hasta - ahora).as_secs_f64().ceil() as u64,
-                });
-            }
+        if let Some(hasta) = self.intentos.lock().unwrap().get(&ip).and_then(|i| i.hasta)
+            && hasta > ahora
+        {
+            return Err(ErrorLogin::Bloqueado {
+                segundos: (hasta - ahora).as_secs_f64().ceil() as u64,
+            });
         }
         let (hash, secreto) = {
             let d = self.datos.lock().unwrap();
@@ -269,14 +269,13 @@ impl Almacen {
         };
         let mut sesiones = self.sesiones.lock().unwrap();
         sesiones.retain(|_, s| s.caduca > ahora);
-        if sesiones.len() >= MAX_SESIONES {
-            if let Some(k) = sesiones
+        if sesiones.len() >= MAX_SESIONES
+            && let Some(k) = sesiones
                 .iter()
                 .min_by_key(|(_, s)| s.caduca)
                 .map(|(k, _)| *k)
-            {
-                sesiones.remove(&k);
-            }
+        {
+            sesiones.remove(&k);
         }
         sesiones.insert(hash_token(&sesion.token), sesion.clone());
         Ok(sesion)

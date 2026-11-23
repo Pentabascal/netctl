@@ -1,0 +1,2 @@
+untrusted comment: PENDIENTE: pon aquí la clave pública minisign de netctl (Tarea 8)
+PENDIENTE

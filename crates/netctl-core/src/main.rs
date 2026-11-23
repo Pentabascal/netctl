@@ -13,7 +13,8 @@ use netctl_core::alcance;
 use netctl_core::api::{self, Estado};
 use netctl_core::auth::Almacen;
 use netctl_core::config::{Alcance, Config, RUTA_CONFIG};
-use netctl_core::{ficheros, tls};
+use netctl_core::modulos::{self, Gestor, Rutas, SystemdReal, catalogo};
+use netctl_core::{ficheros, proxy, tls};
 
 const AYUDA: &str = "Uso:
   netctl-core serve                    Arranca el panel
@@ -125,7 +126,7 @@ fn enlazar(ip: IpAddr, puerto: u16) -> Result<std::net::TcpListener> {
 
 async fn servir(ruta: &Path) -> Result<()> {
     tls::instalar_proveedor();
-    let config = Config::cargar(&ruta)?;
+    let config = Config::cargar(ruta)?;
     ficheros::crear_dir(&config.datos, 0o700)?;
     let auth = almacen(&config)?;
     if !auth.hay_password() {
@@ -147,7 +148,20 @@ async fn servir(ruta: &Path) -> Result<()> {
         auth,
         redes_wg_cacheadas(),
     ));
-    let app = api::router(estado.clone(), axum::Router::new());
+    let gestor = Arc::new(Gestor::new(
+        Rutas::sistema(&estado.config.read().unwrap().datos),
+        Arc::new(SystemdReal),
+        catalogo::URL_BASE,
+        catalogo::clave_publica(),
+        netctl_sdk::distro::detectar(),
+    ));
+    if gestor.clave.is_none() {
+        eprintln!(
+            "Aviso: el núcleo no tiene clave pública de firma; el catálogo de módulos no funcionará"
+        );
+    }
+    let protegidas = modulos::rutas(gestor.clone()).merge(proxy::rutas(gestor));
+    let app = api::router(estado.clone(), protegidas);
     let mut rx = estado.alcance_tx.subscribe();
 
     loop {

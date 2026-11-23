@@ -5,5 +5,7 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod ficheros;
+pub mod modulos;
+pub mod proxy;
 pub mod tls;
 pub mod web;
