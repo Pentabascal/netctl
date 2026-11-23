@@ -1,2 +1,2 @@
-untrusted comment: minisign public key 330DCD8CA52ECF66
-RWRmzy6ljM0NMz5M6lpjXEy2EGNhh8RoIbd5EydUdef8DR4rcHkEnkS+
+untrusted comment: minisign public key A5939385E26DC556
+RWRWxW3ihZOTpU1Lcl8auJVA3Id64aa0JYPpDnNPXbKcFuHiZ3w7I7WX
