@@ -1,0 +1,39 @@
+[package]
+name = "netctl-core"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+netctl-sdk.workspace = true
+anyhow = "1"
+argon2 = "0.5"
+axum = "0.8"
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+base64.workspace = true
+flate2 = "1"
+getrandom.workspace = true
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+if-addrs = "0.13"
+ipnet.workspace = true
+minisign-verify = "0.2"
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
+rpassword = "7"
+rust-embed = "8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+semver = { version = "1", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+subtle = "2"
+tar = "0.4"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+totp-rs = "5"
+
+[dev-dependencies]
+minisign = "0.7"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
