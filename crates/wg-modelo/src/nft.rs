@@ -78,7 +78,9 @@ pub fn tabla_wg(p: &Proyecto, nat: bool) -> Result<String, String> {
     if nat {
         let _ = writeln!(o, "    chain postrouting {{");
         let _ = writeln!(o, "        type nat hook postrouting priority srcnat; policy accept;");
-        let _ = writeln!(o, r#"        ip saddr {red} oifname "{out}" masquerade"#);
+        // Por cualquier interfaz menos la VPN: internet (salida) y también la intranet,
+        // cuyos equipos no saben volver a la red VPN si no se enmascara.
+        let _ = writeln!(o, r#"        ip saddr {red} oifname != "{wg}" masquerade"#);
         let _ = writeln!(o, "    }}");
     }
     let _ = writeln!(o, "}}");
@@ -141,7 +143,7 @@ mod tests {
     fn nat_opcional() {
         let p = proyecto();
         let con = tabla_wg(&p, true).unwrap();
-        assert!(con.contains(r#"ip saddr 10.8.0.0/24 oifname "eth0" masquerade"#), "{con}");
+        assert!(con.contains(r#"ip saddr 10.8.0.0/24 oifname != "wg0" masquerade"#), "{con}");
         assert!(!tabla_wg(&p, false).unwrap().contains("masquerade"));
     }
 

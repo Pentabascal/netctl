@@ -1,6 +1,6 @@
 id = "wireguard"
 nombre = "WireGuard"
-version = "0.1.1"
+version = "0.1.2"
 nucleo_minimo = "0.1.0"
 icono = "vpn"
 
