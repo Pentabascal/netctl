@@ -2499,6 +2499,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "netctl-mod-wireguard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "ipnet",
+ "netctl-sdk",
+ "qrcode",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+ "wg-modelo",
+]
+
+[[package]]
 name = "netctl-sdk"
 version = "0.1.0"
 dependencies = [

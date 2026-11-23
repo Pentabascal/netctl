@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
-# "modules/*" se añade en la Tarea 6: un glob sin coincidencias rompe el workspace
-members = ["crates/*", "apps/*"]
+members = ["crates/*", "modules/*", "apps/*"]
 
 [workspace.package]
 edition = "2024"

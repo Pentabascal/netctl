@@ -1,0 +1,20 @@
+id = "wireguard"
+nombre = "WireGuard"
+version = "0.1.0"
+nucleo_minimo = "0.1.0"
+icono = "vpn"
+
+[[menu]]
+titulo = "Clientes"
+ruta = "clientes"
+icono = "clientes"
+
+[[menu]]
+titulo = "Servidor"
+ruta = "servidor"
+icono = "servidor"
+
+[paquetes]
+debian = ["wireguard-tools", "nftables"]
+suse = ["wireguard-tools", "nftables"]
+rhel = ["wireguard-tools", "nftables"]
