@@ -1,7 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-mod claves;
-mod modelo;
+use wg_modelo::{claves, modelo};
 mod ui_kit;
 
 use std::path::{Path, PathBuf};

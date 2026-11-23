@@ -5,7 +5,7 @@ use eframe::egui::{
     Response, RichText, Sense, Shape, Stroke, TextStyle, Ui, pos2, vec2,
 };
 
-use crate::modelo::{Cliente, Proyecto};
+use wg_modelo::{Cliente, Proyecto};
 
 pub const AZUL: Color32 = Color32::from_rgb(64, 150, 255);
 pub const AZUL_TINTE: Color32 = Color32::from_rgb(22, 46, 82);

@@ -1,15 +1,17 @@
-[package]
-name = "wg-configurador"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+# "modules/*" se añade en la Tarea 6: un glob sin coincidencias rompe el workspace
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+wg-modelo = { path = "crates/wg-modelo" }
+netctl-sdk = { path = "crates/netctl-sdk" }
 base64 = "0.22"
-eframe = "0.37"
 getrandom = "0.2"
 ipnet = { version = "2", features = ["serde"] }
-qrcode = { version = "0.15", default-features = false }
-rfd = "0.18"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 x25519-dalek = "2"

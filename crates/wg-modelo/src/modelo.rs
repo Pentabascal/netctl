@@ -78,6 +78,13 @@ pub struct Cliente {
     pub usar_dns: bool,
     #[serde(deserialize_with = "texto_o_numero")]
     pub keepalive: String,
+    /// Un cliente inactivo no sale en la config del servidor ni en las reglas.
+    #[serde(default = "si")]
+    pub activo: bool,
+}
+
+fn si() -> bool {
+    true
 }
 
 impl Default for Cliente {
@@ -96,6 +103,7 @@ impl Default for Cliente {
             extra: String::new(),
             usar_dns: false,
             keepalive: "25".into(),
+            activo: true,
         }
     }
 }
@@ -219,7 +227,7 @@ impl Proyecto {
         self.clientes.len() - 1
     }
 
-    fn dns(&self) -> Result<Vec<IpAddr>, String> {
+    pub(crate) fn dns(&self) -> Result<Vec<IpAddr>, String> {
         self.servidor
             .dns
             .split([',', ' '])
@@ -343,6 +351,18 @@ impl Proyecto {
         n
     }
 
+    /// Clientes que entran en la config del servidor y en las reglas.
+    pub fn clientes_activos(&self) -> impl Iterator<Item = &Cliente> {
+        self.clientes.iter().filter(|c| c.activo)
+    }
+
+    /// Redes privadas que se bloquean a un cliente con internet (intranet + RFC1918).
+    pub(crate) fn privadas_bloqueadas(&self) -> Result<Vec<IpNet>, String> {
+        let mut v = self.todas_intranet()?;
+        v.extend(PRIVADAS.iter().map(|x| x.parse::<IpNet>().unwrap()));
+        Ok(IpNet::aggregate(&v))
+    }
+
     /// Reglas iptables (PostUp, PostDown).
     fn reglas(&self) -> Result<(Vec<String>, Vec<String>), String> {
         let s = &self.servidor;
@@ -362,9 +382,8 @@ impl Proyecto {
             if s.entre_clientes {
                 up.push(format!("iptables -A {ch} -s {red} -d {red} -j ACCEPT"));
             }
-            let privadas: Vec<IpNet> = PRIVADAS.iter().map(|x| x.parse().unwrap()).collect();
             let dns: Vec<IpAddr> = self.dns()?;
-            for c in &self.clientes {
+            for c in self.clientes_activos() {
                 let ip = c.ip.trim();
                 let com = format!("-m comment --comment {}", nombre_seguro(&c.nombre));
                 let destinos = self.destinos(c)?;
@@ -383,9 +402,7 @@ impl Proyecto {
                         }
                     }
                     // Internet sí, pero redes privadas no permitidas: bloqueadas
-                    let mut bloquear = self.todas_intranet()?;
-                    bloquear.extend(privadas.iter().copied());
-                    for b in IpNet::aggregate(&bloquear) {
+                    for b in self.privadas_bloqueadas()? {
                         up.push(format!("iptables -A {ch} -s {ip}/32 -d {b} {com} -j DROP"));
                     }
                     up.push(format!("iptables -A {ch} -s {ip}/32 -o {out} {com} -j ACCEPT"));
@@ -411,13 +428,27 @@ impl Proyecto {
         Ok((up, down))
     }
 
+    /// Config del servidor con las reglas iptables en PostUp/PostDown (app de escritorio).
     pub fn config_servidor(&self) -> Result<String, String> {
+        self.config_servidor_con(true)
+    }
+
+    /// Config del servidor para el panel: sin PostUp/PostDown (las reglas van en nftables).
+    pub fn config_servidor_panel(&self) -> Result<String, String> {
+        self.config_servidor_con(false)
+    }
+
+    fn config_servidor_con(&self, con_reglas: bool) -> Result<String, String> {
         let s = &self.servidor;
         let red = self.red_vpn()?;
         let mut o = String::new();
-        let _ = writeln!(o, "# Servidor WireGuard — generado por wg-configurador");
-        let _ = writeln!(o, "# Guardar como /etc/wireguard/{}.conf (chmod 600)", s.interfaz.trim());
-        let _ = writeln!(o, "# Activar: systemctl enable --now wg-quick@{}\n", s.interfaz.trim());
+        if con_reglas {
+            let _ = writeln!(o, "# Servidor WireGuard — generado por wg-configurador");
+            let _ = writeln!(o, "# Guardar como /etc/wireguard/{}.conf (chmod 600)", s.interfaz.trim());
+            let _ = writeln!(o, "# Activar: systemctl enable --now wg-quick@{}\n", s.interfaz.trim());
+        } else {
+            let _ = writeln!(o, "# Servidor WireGuard — gestionado por netctl, no editar a mano\n");
+        }
         let _ = writeln!(o, "[Interface]");
         let _ = writeln!(o, "Address = {}/{}", s.ip_servidor.trim(), red.prefix_len());
         let _ = writeln!(o, "ListenPort = {}", s.puerto.trim());
@@ -425,14 +456,16 @@ impl Proyecto {
         if !s.mtu.trim().is_empty() {
             let _ = writeln!(o, "MTU = {}", s.mtu.trim());
         }
-        let (up, down) = self.reglas()?;
-        for r in up {
-            let _ = writeln!(o, "PostUp = {r}");
+        if con_reglas {
+            let (up, down) = self.reglas()?;
+            for r in up {
+                let _ = writeln!(o, "PostUp = {r}");
+            }
+            for r in down {
+                let _ = writeln!(o, "PostDown = {r}");
+            }
         }
-        for r in down {
-            let _ = writeln!(o, "PostDown = {r}");
-        }
-        for c in &self.clientes {
+        for c in self.clientes_activos() {
             let _ = writeln!(o, "\n# {} — {}", c.nombre, self.resumen_acceso(c));
             let _ = writeln!(o, "[Peer]");
             let _ = writeln!(o, "PublicKey = {}", c.clave_publica.trim());
