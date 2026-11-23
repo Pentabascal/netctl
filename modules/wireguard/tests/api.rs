@@ -460,3 +460,51 @@ async fn arrancar_sin_cambios_no_reinicia() {
         "la tabla nft se recarga siempre al arrancar: {o:?}"
     );
 }
+
+#[tokio::test]
+async fn interfaz_traversal_no_se_guarda_ni_borra() {
+    let e = entorno_con(Doble::default());
+    let rev = configurado(&e).await;
+    // Fichero ajeno fuera de /etc/wireguard que el ataque intentaría borrar.
+    let raiz = e.rutas.wireguard.parent().unwrap().parent().unwrap();
+    let victima = raiz.join("root/x.conf");
+    std::fs::create_dir_all(victima.parent().unwrap()).unwrap();
+    std::fs::write(&victima, "no tocar").unwrap();
+    let guardado = std::fs::read_to_string(e.rutas.datos.join("proyecto.json")).unwrap();
+
+    let (st, v) = pedir(
+        &e,
+        "PUT",
+        "/servidor",
+        Some(json!({"revision": rev, "interfaz": "../../root/x"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v["errores"].as_array().is_some_and(|a| !a.is_empty()), "{v}");
+    // Nada guardado: ni en disco ni en memoria.
+    assert_eq!(
+        std::fs::read_to_string(e.rutas.datos.join("proyecto.json")).unwrap(),
+        guardado
+    );
+    let (_, s) = pedir(&e, "GET", "/servidor", None).await;
+    assert_eq!(s["servidor"]["interfaz"], "wg0", "{s}");
+    assert_eq!(s["revision"].as_u64(), Some(rev), "{s}");
+
+    // Un cambio legítimo después no borra el fichero ajeno.
+    let (st, v) = pedir(
+        &e,
+        "PUT",
+        "/servidor",
+        Some(json!({"revision": rev, "interfaz": "wg1"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(std::fs::read_to_string(&victima).unwrap(), "no tocar");
+
+    // Defensa en profundidad: la ruta del .conf se niega para nombres no válidos.
+    assert!(e.rutas.conf("../../root/x").is_err());
+    assert!(e.rutas.conf("..").is_err());
+    assert_eq!(e.rutas.conf("wg0").unwrap(), e.rutas.wireguard.join("wg0.conf"));
+    netctl_mod_wireguard::aplicar::retirar(&*e.doble, &e.rutas, "../../root/x");
+    assert!(victima.exists());
+}

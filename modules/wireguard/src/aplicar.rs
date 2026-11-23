@@ -99,7 +99,7 @@ pub fn aplicar(
     let conf = p.config_servidor_panel()?;
     let reglas = nft::tabla_wg(p, !firewall_presente)?;
     let iface = p.servidor.interfaz.trim();
-    let ruta = r.conf(iface);
+    let ruta = r.conf(iface)?;
     let anterior = std::fs::read_to_string(&ruta).ok();
 
     // Un .conf de wg-configurador quita sus reglas iptables en PostDown: hay que bajar la
@@ -148,7 +148,7 @@ pub fn adoptar(
 ) -> Result<(), String> {
     let iface = p.servidor.interfaz.trim();
     let nuevo = p.config_servidor_panel()?;
-    match std::fs::read_to_string(r.conf(iface)).ok() {
+    match std::fs::read_to_string(r.conf(iface)?).ok() {
         None => aplicar(s, r, p, Cambio::Servidor, firewall_presente),
         Some(t) if tiene_postup(&t) => {
             eprintln!(
@@ -167,8 +167,10 @@ pub fn adoptar(
 
 /// Deja de usar una interfaz (al renombrarla o reemplazar el proyecto).
 pub fn retirar(s: &dyn Sistema, r: &Rutas, iface: &str) {
+    // Un nombre no válido nunca llegó a usarse: no se toca nada.
+    let Ok(ruta) = r.conf(iface) else { return };
     let _ = s.ejecutar("systemctl", &["disable", "--now", &unidad(iface)], None);
-    let _ = std::fs::remove_file(r.conf(iface));
+    let _ = std::fs::remove_file(ruta);
 }
 
 fn reiniciar(s: &dyn Sistema, iface: &str) -> Result<(), String> {

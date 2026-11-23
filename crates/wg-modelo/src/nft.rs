@@ -12,11 +12,7 @@ const TABLA: &str = "inet netctl_wg";
 
 /// Nombre de interfaz apto para ir entre comillas en nft.
 fn interfaz(campo: &str, v: &str) -> Result<String, String> {
-    let v = v.trim();
-    if v.is_empty() || v.len() > 15 || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
-        return Err(format!("{campo} «{v}» no es un nombre de interfaz válido"));
-    }
-    Ok(v.to_string())
+    crate::validar_interfaz(campo, v)
 }
 
 /// Script completo para `nft -f`: borra y recrea la tabla `inet netctl_wg` de forma atómica.

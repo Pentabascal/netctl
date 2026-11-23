@@ -55,8 +55,11 @@ impl Rutas {
         }
     }
 
-    pub fn conf(&self, interfaz: &str) -> PathBuf {
-        self.wireguard.join(format!("{}.conf", interfaz.trim()))
+    /// `/etc/wireguard/<interfaz>.conf`. Se niega con nombres que no son de interfaz
+    /// (`..`, `/`…): con ellos se podría escribir o borrar un `.conf` cualquiera como root.
+    pub fn conf(&self, interfaz: &str) -> Result<PathBuf, String> {
+        let i = wg_modelo::validar_interfaz("Interfaz", interfaz)?;
+        Ok(self.wireguard.join(format!("{i}.conf")))
     }
 }
 

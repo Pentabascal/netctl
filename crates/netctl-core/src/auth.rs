@@ -44,6 +44,9 @@ pub struct Sesion {
     pub token: String,
     pub csrf: String,
     pub caduca: Instant,
+    /// `generacion` de `admin.json` al crearla: si sube (cambio de contraseña o de TOTP,
+    /// también desde otro proceso), la sesión deja de valer.
+    pub generacion: u64,
 }
 
 impl Sesion {
@@ -61,6 +64,9 @@ struct Datos {
     /// Secreto TOTP en base32; presente = doble factor activado.
     #[serde(default)]
     totp: Option<String>,
+    /// Sube con cada cambio de credenciales; invalida las sesiones anteriores.
+    #[serde(default)]
+    generacion: u64,
 }
 
 #[derive(Default)]
@@ -82,6 +88,16 @@ pub struct Almacen {
     totp: Mutex<Totp>,
     sesiones: Mutex<HashMap<[u8; 32], Sesion>>,
     intentos: Mutex<HashMap<IpAddr, Intentos>>,
+    /// Firma (mtime, tamaño, inodo) de `admin.json` la última vez que se leyó.
+    firma: Mutex<Option<Firma>>,
+}
+
+type Firma = (Option<SystemTime>, u64, u64);
+
+fn firma(ruta: &Path) -> Option<Firma> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(ruta).ok()?;
+    Some((m.modified().ok(), m.len(), m.ino()))
 }
 
 fn hash_token(token: &str) -> [u8; 32] {
@@ -163,16 +179,27 @@ impl Almacen {
             totp: Mutex::default(),
             sesiones: Mutex::default(),
             intentos: Mutex::default(),
+            firma: Mutex::new(firma(ruta)),
         })
     }
 
     /// Vuelve a leer `admin.json` (lo puede cambiar `netctl-core admin ...` con el servicio en marcha).
     fn recargar(&self) {
+        let f = firma(&self.ruta);
         if let Ok(d) = std::fs::read_to_string(&self.ruta)
             .map_err(anyhow::Error::from)
             .and_then(|t| Ok(serde_json::from_str::<Datos>(&t)?))
         {
             *self.datos.lock().unwrap() = d;
+            *self.firma.lock().unwrap() = f;
+        }
+    }
+
+    /// Recarga `admin.json` solo si ha cambiado en disco (se mira en cada petición).
+    fn recargar_si_cambio(&self) {
+        let f = firma(&self.ruta);
+        if f.is_some() && *self.firma.lock().unwrap() != f {
+            self.recargar();
         }
     }
 
@@ -197,10 +224,13 @@ impl Almacen {
             anyhow::bail!("La contraseña no puede estar vacía");
         }
         let hash = hash_password(password)?;
+        self.recargar();
         let mut d = self.datos.lock().unwrap();
         let anterior = d.password.replace(hash);
+        d.generacion += 1;
         if let Err(e) = self.guardar(&d) {
             d.password = anterior;
+            d.generacion -= 1;
             return Err(e);
         }
         self.sesiones.lock().unwrap().clear();
@@ -214,9 +244,14 @@ impl Almacen {
 
     /// Quita el doble factor (solo desde la línea de órdenes, como root).
     pub fn quitar_totp(&self) -> Result<()> {
+        self.recargar();
         let mut d = self.datos.lock().unwrap();
         d.totp = None;
-        self.guardar(&d)
+        d.generacion += 1;
+        self.guardar(&d)?;
+        drop(d);
+        self.sesiones.lock().unwrap().clear();
+        Ok(())
     }
 
     pub fn login(
@@ -245,9 +280,9 @@ impl Almacen {
                 segundos: (hasta - ahora).as_secs_f64().ceil() as u64,
             });
         }
-        let (hash, secreto) = {
+        let (hash, secreto, generacion) = {
             let d = self.datos.lock().unwrap();
-            (d.password.clone(), d.totp.clone())
+            (d.password.clone(), d.totp.clone(), d.generacion)
         };
         // Sin código no se mira la contraseña: así no se revela si era correcta.
         if secreto.is_some() && totp.is_none() {
@@ -266,6 +301,7 @@ impl Almacen {
             token: token_aleatorio(),
             csrf: token_aleatorio(),
             caduca: ahora + DURACION_SESION,
+            generacion,
         };
         let mut sesiones = self.sesiones.lock().unwrap();
         sesiones.retain(|_, s| s.caduca > ahora);
@@ -330,10 +366,13 @@ impl Almacen {
 
     /// Sesión viva con ese token.
     pub fn sesion(&self, token: &str) -> Option<Sesion> {
+        // `netctl-core admin ...` puede haber cambiado la contraseña desde otro proceso.
+        self.recargar_si_cambio();
+        let generacion = self.datos.lock().unwrap().generacion;
         let k = hash_token(token);
         let mut sesiones = self.sesiones.lock().unwrap();
         match sesiones.get(&k) {
-            Some(s) if s.caduca > Instant::now() => Some(s.clone()),
+            Some(s) if s.caduca > Instant::now() && s.generacion >= generacion => Some(s.clone()),
             Some(_) => {
                 sesiones.remove(&k);
                 None
@@ -372,6 +411,7 @@ impl Almacen {
         if !self.comprobar_con(&t, codigo, unix_ahora()) {
             return false;
         }
+        self.recargar();
         let mut d = self.datos.lock().unwrap();
         let anterior = d.totp.replace(base32(&secreto));
         if self.guardar(&d).is_err() {
@@ -430,6 +470,36 @@ mod tests {
         assert!(texto.contains("$argon2id$") && !texto.contains("correcta"));
         let b = Almacen::abrir(&ruta).unwrap();
         assert!(b.comprobar_password("correcta"));
+    }
+
+    #[test]
+    fn cambiar_password_desde_otro_proceso_cierra_sesiones() {
+        // `a` es el servicio; `b`, la orden `netctl-core admin ...` (otro proceso, mismo fichero).
+        let (dir, a) = almacen();
+        let ruta = dir.path().join("admin.json");
+        let ip: IpAddr = "192.168.1.2".parse().unwrap();
+        let s = a.login("correcta", None, ip).unwrap();
+        assert!(a.sesion(&s.token).is_some());
+
+        let b = Almacen::abrir(&ruta).unwrap();
+        b.fijar_password("nueva-larga").unwrap();
+        assert!(a.sesion(&s.token).is_none(), "la sesión anterior debe morir");
+        assert!(a.login("correcta", None, ip).is_err());
+
+        // Las sesiones creadas después del cambio siguen valiendo.
+        let s2 = a.login("nueva-larga", None, ip).unwrap();
+        assert!(a.sesion(&s2.token).is_some());
+        assert!(a.sesion(&s2.token).is_some());
+
+        // Quitar el TOTP desde la línea de órdenes también las cierra.
+        let c = Almacen::abrir(&ruta).unwrap();
+        c.quitar_totp().unwrap();
+        assert!(a.sesion(&s2.token).is_none());
+
+        // El contador queda en admin.json.
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&ruta).unwrap()).unwrap();
+        assert!(v["generacion"].as_u64().unwrap() >= 3, "{v}");
     }
 
     #[test]
