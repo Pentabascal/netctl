@@ -1,0 +1,15 @@
+[package]
+name = "wg-configurador"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22"
+eframe = "0.37"
+getrandom = "0.2"
+ipnet = { version = "2", features = ["serde"] }
+qrcode = { version = "0.15", default-features = false }
+rfd = "0.18"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+x25519-dalek = "2"
