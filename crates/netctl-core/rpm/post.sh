@@ -9,6 +9,12 @@ if ! grep -qs 'argon2' /var/lib/netctl/admin.json; then
     /usr/bin/netctl-core admin password-defecto
     echo "Entra en https://<IP-del-servidor>:8443 con el usuario «admin»."
 fi
+# SELinux: los binarios de módulos deben ser bin_t (si no, corren como init_t y no arrancan).
+if command -v semanage >/dev/null 2>&1 && command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    semanage fcontext -a -t bin_t '/usr/lib/netctl/modules/[^/]+/bin(/.*)?' 2>/dev/null ||
+        semanage fcontext -m -t bin_t '/usr/lib/netctl/modules/[^/]+/bin(/.*)?' 2>/dev/null || true
+    [ -d /usr/lib/netctl/modules ] && restorecon -R /usr/lib/netctl/modules 2>/dev/null || true
+fi
 # Abre el puerto del panel si hay un firewall de la distro activo (firewalld / ufw).
 PUERTO=$(sed -n 's/^[[:space:]]*puerto[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' /etc/netctl/core.toml 2>/dev/null | head -n 1)
 PUERTO=${PUERTO:-8443}

@@ -93,6 +93,21 @@ fn ruta_segura(p: &Path) -> Option<PathBuf> {
 
 /// Extrae un `.tar.gz` en `destino` (que se vacía antes). Solo admite ficheros normales y
 /// carpetas con rutas relativas; rechaza rutas absolutas, `..`, enlaces y ficheros especiales.
+/// Con SELinux activo (RHEL, Alma, Rocky…), lo extraído bajo `/usr/lib` queda como `lib_t`
+/// y systemd lo ejecutaría en el dominio `init_t`, que no puede crear el socket del módulo.
+/// Etiquetado como `bin_t`, el módulo corre como `unconfined_service_t`, igual que el núcleo.
+/// Best-effort: sin SELinux no hace nada.
+fn etiquetar_selinux(bin: &Path) {
+    if !Path::new("/sys/fs/selinux/enforce").exists() || !bin.exists() {
+        return;
+    }
+    match std::process::Command::new("chcon").args(["-R", "-t", "bin_t"]).arg(bin).status() {
+        Ok(st) if st.success() => {}
+        Ok(st) => eprintln!("chcon -t bin_t {} terminó con {st}", bin.display()),
+        Err(e) => eprintln!("no se pudo ejecutar chcon: {e}"),
+    }
+}
+
 pub fn extraer(tar_gz: &[u8], destino: &Path) -> Result<(), String> {
     let r = extraer_en(tar_gz, destino);
     if r.is_err() {
@@ -318,6 +333,7 @@ pub async fn instalar(
         }
         return Err(sistema(e));
     }
+    etiquetar_selinux(&dir.join("bin"));
     let unidad_txt = unidad(&rutas, &manifiesto);
     let arrancar = async {
         std::fs::create_dir_all(&rutas.unidades).map_err(sistema)?;
