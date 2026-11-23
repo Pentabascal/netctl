@@ -1,2 +1,2 @@
-untrusted comment: PENDIENTE: pon aquí la clave pública minisign de netctl (Tarea 8)
-PENDIENTE
+untrusted comment: minisign public key 330DCD8CA52ECF66
+RWRmzy6ljM0NMz5M6lpjXEy2EGNhh8RoIbd5EydUdef8DR4rcHkEnkS+
