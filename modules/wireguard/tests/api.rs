@@ -207,6 +207,16 @@ async fn editar_peer_usa_syncconf() {
 }
 
 #[tokio::test]
+async fn abre_firewalld_si_esta_activo() {
+    let e = entorno_con(Doble::default());
+    configurado(&e).await;
+    let o = e.doble.ordenes();
+    assert!(o.iter().any(|x| x == "firewall-cmd --permanent --add-port 51820/udp"), "{o:?}");
+    assert!(o.iter().any(|x| x == "firewall-cmd --add-port 51820/udp"), "{o:?}");
+    assert!(o.iter().any(|x| x == "firewall-cmd --permanent --zone=trusted --add-interface wg0"), "{o:?}");
+}
+
+#[tokio::test]
 async fn desactivar_quita_peer() {
     let e = entorno_con(Doble::default());
     let rev = configurado(&e).await;

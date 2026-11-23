@@ -110,6 +110,7 @@ pub fn aplicar(
     crate::escribir_privado(&ruta, conf.as_bytes())
         .map_err(|e| format!("No se pudo escribir {}: {e}", ruta.display()))?;
     reenvio(s, r)?;
+    abrir_firewalld(s, iface, p.servidor.puerto.trim());
 
     match cambio {
         Cambio::Servidor => reiniciar(s, iface)?,
@@ -126,6 +127,31 @@ pub fn aplicar(
         }
     }
     s.ejecutar("nft", &["-f", "-"], Some(&reglas)).map(|_| ())
+}
+
+/// Si firewalld está activo (RHEL/SUSE por defecto), abre el puerto UDP de WireGuard y mete
+/// la interfaz en la zona `trusted` para que deje reenviar su tráfico; los permisos por
+/// cliente los sigue aplicando la tabla `netctl_wg`. Es best-effort: un fallo solo se registra.
+fn abrir_firewalld(s: &dyn Sistema, iface: &str, puerto: &str) {
+    if s.ejecutar("firewall-cmd", &["--state"], None).is_err() {
+        return;
+    }
+    let puerto = format!("{puerto}/udp");
+    for permanente in [true, false] {
+        let mut base: Vec<&str> = Vec::new();
+        if permanente {
+            base.push("--permanent");
+        }
+        let mut a = base.clone();
+        a.extend(["--add-port", puerto.as_str()]);
+        let mut b = base.clone();
+        b.extend(["--zone=trusted", "--add-interface", iface]);
+        for args in [a, b] {
+            if let Err(e) = s.ejecutar("firewall-cmd", &args, None) {
+                eprintln!("firewall-cmd {} falló: {e}", args.join(" "));
+            }
+        }
+    }
 }
 
 /// Solo recarga la tabla nftables (p. ej. al instalar o quitar el módulo Firewall).

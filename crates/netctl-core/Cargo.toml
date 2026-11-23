@@ -1,6 +1,6 @@
 [package]
 name = "netctl-core"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 description = "netctl: panel web de administración del servidor con módulos"
 authors = ["Pentabascal <185202188+Pentabascal@users.noreply.github.com>"]
