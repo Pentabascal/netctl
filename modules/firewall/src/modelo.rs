@@ -266,6 +266,9 @@ pub struct Reenvio {
     /// Interfaz WAN; `None` = todas las de la zona Externa.
     #[serde(default)]
     pub wan: Option<String>,
+    /// Una sola IP de la WAN (`None` = todas).
+    #[serde(default)]
+    pub wan_ip: Option<IpAddr>,
     /// Vacío = desde cualquier sitio de internet.
     #[serde(default)]
     pub desde: Vec<Direccion>,
@@ -377,6 +380,9 @@ pub struct Iface {
     pub ips: Vec<IpNet>,
     pub mac: Option<String>,
     pub activa: bool,
+    /// IPs que pueden cambiar (DHCP, PPPoE).
+    #[serde(default)]
+    pub dinamicas: Vec<IpAddr>,
 }
 
 pub const ZONAS_DE_SERIE: [(&str, &str, TipoZona); 6] = [

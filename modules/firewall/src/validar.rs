@@ -103,6 +103,9 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
     {
         e.push(format!("La interfaz «{w}» no está en la zona Externa: elige otra o «Todas»."));
     }
+    if r.wan_ip.is_some_and(|ip| !ip.is_ipv4()) {
+        e.push("La IP WAN tiene que ser IPv4 (los reenvíos de puertos son solo para IPv4).".into());
+    }
     for d in &r.desde {
         if let Err(x) = validar_dir(c, d) {
             e.push(x);
@@ -139,9 +142,45 @@ pub fn siguiente_libre(c: &Config, f: &Fijas, proto: Protocolo, desde: u16, igno
     (desde.max(1)..=u16::MAX).find(|p| !ocupado(c, f, proto, *p, ignorar))
 }
 
-/// Avisos (no impiden guardar): servicio delicado abierto a todos, destino en VPN/Gateway.
-pub fn avisos_reenvio(c: &Config, r: &Reenvio) -> Vec<String> {
+/// Otro reenvío o DNAT activo que usa algún puerto de `r`: `(id, nombre)`.
+pub fn choca_con<'a>(c: &'a Config, r: &Reenvio) -> Option<(u64, &'a str)> {
+    let solapa = |l: &[RangoPuerto]| r.externo.iter().any(|a| l.iter().any(|b| a.solapa(b)));
+    if let Some(o) = c.reenvios.iter().find(|o| o.activo && o.id != r.id && solapan(o.protocolo, r.protocolo) && solapa(&o.externo)) {
+        return Some((o.id, &o.nombre));
+    }
+    c.nat_propio
+        .iter()
+        .find(|n| n.activa && matches!(n.tipo, TipoNat::Dnat { .. }) && solapan(n.protocolo, r.protocolo) && solapa(&rangos_de(c, &n.puertos)))
+        .map(|n| (n.id, n.nombre.as_str()))
+}
+
+fn es_cgnat(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (64..128).contains(&o[1])
+}
+
+/// Avisos (no impiden guardar): servicio delicado abierto a todos, destino en VPN/Gateway, y
+/// lo que se sabe de la WAN (`ips_wan`: tarjeta, IP, dinámica) que impide llegar desde fuera.
+pub fn avisos_reenvio(c: &Config, r: &Reenvio, ips_wan: &[(String, IpAddr, bool)]) -> Vec<String> {
     let mut a = vec![];
+    if let Some(ip) = r.wan_ip
+        && !ips_wan.iter().any(|(_, x, _)| *x == ip)
+    {
+        a.push(format!("La IP WAN {ip} ya no está en la máquina: el reenvío no funciona hasta que vuelva o elijas «Todas»."));
+    }
+    for (iface, ip, dinamica) in ips_wan {
+        if r.wan.as_ref().is_some_and(|w| w != iface) || r.wan_ip.is_some_and(|x| x != *ip) {
+            continue;
+        }
+        let IpAddr::V4(v4) = ip else { continue };
+        if es_cgnat(*v4) {
+            a.push(format!("{iface} está detrás de CGNAT ({ip}): tu proveedor tiene que abrir el puerto."));
+        } else if v4.is_private() {
+            a.push(format!("{iface} está detrás de otro router (IP privada {ip}). Abre también el mismo puerto en ese router."));
+        } else if *dinamica {
+            a.push(format!("{iface} tiene una IP que puede cambiar. Usa un DNS dinámico para llegar por nombre."));
+        }
+    }
     let mut puertos = r.externo.clone();
     if let Some(i) = r.interno {
         puertos.push(RangoPuerto::uno(i));
@@ -689,14 +728,14 @@ mod tests {
     #[test]
     fn avisos() {
         let c = router();
-        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.20", 3389));
+        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.20", 3389), &[]);
         assert!(a.iter().any(|x| x.contains("Escritorio remoto")), "{a:?}");
         let mut r = reenvio(1, "192.168.1.20", 3389);
         r.desde = vec![Direccion::Ip { red: "198.51.100.7/32".parse().unwrap() }];
-        assert!(avisos_reenvio(&c, &r).is_empty());
-        let a = avisos_reenvio(&c, &reenvio(1, "10.8.0.5", 80));
+        assert!(avisos_reenvio(&c, &r, &[]).is_empty());
+        let a = avisos_reenvio(&c, &reenvio(1, "10.8.0.5", 80), &[]);
         assert!(a.iter().any(|x| x.contains("VPN")), "{a:?}");
-        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.1", 80));
+        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.1", 80), &[]);
         assert!(a.iter().any(|x| x.contains("esta máquina")), "{a:?}");
     }
 
@@ -794,5 +833,62 @@ mod tests {
         assert!(e.iter().any(|x| x.contains("eth9")), "{e:?}");
         assert!(e.iter().any(|x| x.contains("IPv4 e IPv6")), "{e:?}");
         assert!(e.iter().any(|x| x.contains("no usa puertos")), "{e:?}");
+    }
+
+    fn wan(ip: &str, dinamica: bool) -> Vec<(String, IpAddr, bool)> {
+        vec![("eth0".into(), ip.parse().unwrap(), dinamica)]
+    }
+
+    #[test]
+    fn aviso_ip_privada() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("192.168.0.2", false));
+        assert!(a.contains(&"eth0 está detrás de otro router (IP privada 192.168.0.2). Abre también el mismo puerto en ese router.".to_string()), "{a:?}");
+    }
+
+    #[test]
+    fn aviso_cgnat() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("100.72.1.9", false));
+        assert!(a.contains(&"eth0 está detrás de CGNAT (100.72.1.9): tu proveedor tiene que abrir el puerto.".to_string()), "{a:?}");
+    }
+
+    #[test]
+    fn aviso_dinamica() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("203.0.113.4", true));
+        assert_eq!(a, vec!["eth0 tiene una IP que puede cambiar. Usa un DNS dinámico para llegar por nombre.".to_string()]);
+        assert!(avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("203.0.113.4", false)).is_empty());
+    }
+
+    #[test]
+    fn sin_ip_wan_sin_aviso() {
+        assert!(avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &[]).is_empty());
+    }
+
+    #[test]
+    fn aviso_solo_de_la_wan_elegida() {
+        let mut r = reenvio(1, "192.168.1.20", 25565);
+        r.wan_ip = Some("203.0.113.4".parse().unwrap());
+        let ips = vec![("eth0".to_string(), "203.0.113.4".parse().unwrap(), false), ("eth0".to_string(), "100.72.1.9".parse().unwrap(), true)];
+        assert!(avisos_reenvio(&router(), &r, &ips).is_empty());
+    }
+
+    #[test]
+    fn choca_al_reanudar() {
+        let mut c = router();
+        c.reenvios.push(reenvio(1, "192.168.1.20", 25565));
+        let mut r = reenvio(2, "192.168.1.21", 25565);
+        r.activo = false;
+        c.reenvios.push(r.clone());
+        assert_eq!(choca_con(&c, &r).map(|(id, n)| (id, n.to_string())), Some((1, "r1".to_string())));
+        r.externo = vec![RangoPuerto::uno(25566)];
+        assert_eq!(choca_con(&c, &r), None);
+    }
+
+    #[test]
+    fn wan_ip_v6_no() {
+        let mut c = router();
+        let mut r = reenvio(1, "192.168.1.20", 25565);
+        r.wan_ip = Some("2001:db8::1".parse().unwrap());
+        c.reenvios.push(r);
+        assert!(validar(&c, &fijas()).iter().any(|x| x.contains("IPv4")));
     }
 }

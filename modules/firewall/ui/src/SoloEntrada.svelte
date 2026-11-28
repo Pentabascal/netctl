@@ -97,7 +97,7 @@
   }
 
   const esPrivada = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip);
-  const ipPrivada = $derived((config.ips_externas ?? []).find(esPrivada) ?? '');
+  const ipPrivada = $derived((config.ips_externas ?? []).map((x) => x.ip).find(esPrivada) ?? '');
   const delicado = $derived(!soloAlgunas && elegida?.delicado);
 </script>
 

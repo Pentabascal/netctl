@@ -378,6 +378,13 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     let mut post = String::new();
     for r in &reenvios {
         let Some(ip) = ip_reenvio(r) else { continue };
+        // Una IP WAN que ya no está en la máquina: no se genera (lo avisa `avisos_reenvio`).
+        let wan_ip = match r.wan_ip {
+            Some(std::net::IpAddr::V4(w)) if f.ips_externas.contains(&w) => Some(w),
+            Some(_) => continue,
+            None => None,
+        };
+        let daddr = wan_ip.map(|w| format!("ip daddr {w}")).unwrap_or_default();
         let wans = match &r.wan {
             Some(w) => vec![w.clone()],
             None => ext.clone(),
@@ -418,11 +425,14 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         }
         for o in &origenes {
             let mut l = String::new();
-            linea(&mut l, &[&iif, o, &proto, "counter", &log, &destino, &comentario]);
+            linea(&mut l, &[&iif, &daddr, o, &proto, "counter", &log, &destino, &comentario]);
             pre.push_str(&l);
         }
         if r.loopback && !f.ips_externas.is_empty() {
-            let ips: Vec<String> = f.ips_externas.iter().map(|i| i.to_string()).collect();
+            let ips: Vec<String> = match wan_ip {
+                Some(w) => vec![w.to_string()],
+                None => f.ips_externas.iter().map(|i| i.to_string()).collect(),
+            };
             let mut l = String::new();
             linea(&mut l, &[&format!("iifname != {wl}"), &format!("ip daddr {{ {} }}", ips.join(", ")), &proto, "counter", &destino, &comentario]);
             pre.push_str(&l);
@@ -997,5 +1007,40 @@ mod tests {
         let post = &t[pos(&t, "chain postrouting")..];
         assert!(!post.contains("nat_interna"), "{post}");
         assert!(post.contains("nat_vpn"), "{post}");
+    }
+
+    #[test]
+    fn dnat_con_wan_ip() {
+        let mut c = router();
+        let mut r = reenvio(9, "192.168.1.20", 25565);
+        r.wan_ip = Some("203.0.113.7".parse().unwrap());
+        c.reenvios.push(r);
+        let mut f = fijas();
+        f.ips_externas.push("203.0.113.7".parse().unwrap());
+        let t = generar(&c, &f, 1000).unwrap();
+        let pre = &t[pos(&t, "chain prerouting")..pos(&t, "chain postrouting")];
+        assert!(pre.contains("iifname { \"eth0\" } ip daddr 203.0.113.7 tcp dport 25565 counter dnat ip to 192.168.1.20"), "{pre}");
+        assert!(pre.contains("iifname != { \"eth0\" } ip daddr { 203.0.113.7 } tcp dport 25565"), "loopback solo a esa IP: {pre}");
+    }
+
+    #[test]
+    fn ip_wan_desaparecida() {
+        let mut c = router();
+        let mut r = reenvio(9, "192.168.1.20", 25565);
+        r.wan_ip = Some("203.0.113.7".parse().unwrap());
+        c.reenvios.push(r.clone());
+        let t = generado(&c);
+        assert!(!t.contains("dnat ip to 192.168.1.20"), "{t}");
+        let a = crate::validar::avisos_reenvio(&c, &r, &[("eth0".into(), "203.0.113.4".parse().unwrap(), false)]);
+        assert!(a.iter().any(|x| x.contains("203.0.113.7") && x.contains("ya no")), "{a:?}");
+    }
+
+    #[test]
+    fn sin_ip_wan_sigue_funcionando() {
+        let mut c = router();
+        c.reenvios.push(reenvio(9, "192.168.1.20", 25565));
+        let mut f = fijas();
+        f.ips_externas.clear();
+        assert!(generar(&c, &f, 1000).unwrap().contains("dnat ip to 192.168.1.20"));
     }
 }

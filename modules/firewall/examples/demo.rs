@@ -57,6 +57,7 @@ fn reenvio(id: u64, nombre: &str, eq: Direccion, proto: Protocolo, puertos: &[(u
         externo: puertos.iter().map(|(a, b)| RangoPuerto { desde: *a, hasta: *b }).collect(),
         interno: None,
         wan: None,
+        wan_ip: None,
         desde: vec![],
         caduca: None,
         loopback: true,

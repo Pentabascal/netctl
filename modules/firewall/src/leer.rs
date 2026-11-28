@@ -34,20 +34,19 @@ pub fn parse_ip_addr(json: &str) -> Vec<Iface> {
                 .and_then(|f| f.as_array())
                 .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("UP")));
             let activa = estado == "UP" || (estado == "UNKNOWN" && up);
-            let ips = i
-                .get("addr_info")
-                .and_then(|a| a.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| {
-                            let ip: IpAddr = x.get("local")?.as_str()?.parse().ok()?;
-                            let p = x.get("prefixlen")?.as_u64()? as u8;
-                            ipnet::IpNet::new(ip, p).ok()
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some(Iface { nombre, ips, mac, activa })
+            let ppp = nombre.starts_with("ppp");
+            let mut ips = vec![];
+            let mut dinamicas = vec![];
+            for x in i.get("addr_info").and_then(|a| a.as_array()).into_iter().flatten() {
+                let Some(ip) = x.get("local").and_then(|l| l.as_str()).and_then(|l| l.parse::<IpAddr>().ok()) else { continue };
+                let Some(p) = x.get("prefixlen").and_then(|p| p.as_u64()) else { continue };
+                let Ok(red) = ipnet::IpNet::new(ip, p as u8) else { continue };
+                ips.push(red);
+                if ppp || x.get("dynamic").and_then(|d| d.as_bool()) == Some(true) {
+                    dinamicas.push(ip);
+                }
+            }
+            Some(Iface { nombre, ips, mac, activa, dinamicas })
         })
         .collect()
 }
@@ -180,6 +179,21 @@ pub fn fijas(s: &dyn Sistema, r: &Rutas, c: &Config) -> Fijas {
     Fijas { panel, alcance_internet, ssh, wg, ips_externas: ips_externas(c) }
 }
 
+/// IPv4 de la zona Externa con su tarjeta y si puede cambiar: `(iface, ip, dinámica)`.
+pub fn ips_wan(c: &Config, ifaces: &[Iface]) -> Vec<(String, IpAddr, bool)> {
+    let ext = c.ifaces_externas();
+    ifaces
+        .iter()
+        .filter(|i| ext.contains(&i.nombre))
+        .flat_map(|i| {
+            i.ips
+                .iter()
+                .filter(|n| n.addr().is_ipv4())
+                .map(|n| (i.nombre.clone(), n.addr(), i.dinamicas.contains(&n.addr())))
+        })
+        .collect()
+}
+
 /// IPv4 de las interfaces de la zona Externa.
 pub fn ips_externas(c: &Config) -> Vec<Ipv4Addr> {
     c.ifaces_externas()
@@ -275,5 +289,23 @@ mod tests {
         assert_eq!(f.ssh, 2200);
         assert_eq!(f.wg, vec![("wg0".to_string(), 51820)]);
         assert_eq!(f.ips_externas, vec!["203.0.113.4".parse::<Ipv4Addr>().unwrap()]);
+    }
+
+    #[test]
+    fn ips_wan_dinamicas() {
+        let j = r#"[{"ifname":"eth0","operstate":"UP","addr_info":[{"family":"inet","local":"203.0.113.4","prefixlen":24,"dynamic":true},{"family":"inet","local":"203.0.113.7","prefixlen":24}]},
+{"ifname":"ppp0","operstate":"UP","addr_info":[{"family":"inet","local":"198.51.100.2","prefixlen":32}]},
+{"ifname":"eth1","operstate":"UP","addr_info":[{"family":"inet","local":"192.168.1.1","prefixlen":24}]}]"#;
+        let v = parse_ip_addr(j);
+        assert_eq!(v[0].dinamicas, vec!["203.0.113.4".parse::<IpAddr>().unwrap()]);
+        assert_eq!(v[1].dinamicas, vec!["198.51.100.2".parse::<IpAddr>().unwrap()], "ppp siempre dinámica");
+        let mut c = router();
+        c.interfaces.insert("ppp0".into(), "externa".into());
+        let w = ips_wan(&c, &v);
+        assert_eq!(w, vec![
+            ("eth0".to_string(), "203.0.113.4".parse().unwrap(), true),
+            ("eth0".to_string(), "203.0.113.7".parse().unwrap(), false),
+            ("ppp0".to_string(), "198.51.100.2".parse().unwrap(), true),
+        ]);
     }
 }

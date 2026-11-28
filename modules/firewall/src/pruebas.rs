@@ -3,7 +3,7 @@
 use crate::modelo::*;
 
 pub fn iface(nombre: &str, ip: &str) -> Iface {
-    Iface { nombre: nombre.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true }
+    Iface { nombre: nombre.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true, dinamicas: vec![] }
 }
 
 /// Router típico: eth0 a internet, eth1 LAN, wg0 VPN.
@@ -38,6 +38,7 @@ pub fn reenvio(id: u64, ip: &str, externo: u16) -> Reenvio {
         externo: vec![RangoPuerto::uno(externo)],
         interno: None,
         wan: None,
+        wan_ip: None,
         desde: vec![],
         caduca: None,
         loopback: true,

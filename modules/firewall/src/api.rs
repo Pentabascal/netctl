@@ -189,6 +189,11 @@ impl Estado {
         }
     }
 
+    /// IPv4 de la WAN leídas ahora mismo: `(tarjeta, ip, dinámica)`.
+    fn ips_wan(&self, c: &Config) -> Vec<(String, IpAddr, bool)> {
+        leer::ips_wan(c, &leer::interfaces(&*self.sistema))
+    }
+
     fn fijas(&self, c: &Config) -> Fijas {
         leer::fijas(&*self.sistema, &self.rutas, c)
     }
@@ -251,6 +256,10 @@ impl Estado {
 
 fn usuario(h: &HeaderMap) -> String {
     netctl_sdk::servidor::usuario(h).unwrap_or_else(|| "admin".into())
+}
+
+fn ips_wan_json(v: &[(String, IpAddr, bool)]) -> Value {
+    json!(v.iter().map(|(iface, ip, dinamica)| json!({ "iface": iface, "ip": ip, "dinamica": dinamica })).collect::<Vec<_>>())
 }
 
 fn json_a<T: serde::de::DeserializeOwned>(v: Value) -> Result<T, Fallo> {
@@ -590,7 +599,7 @@ async fn ver_config(State(e): E) -> R {
                 "panel": f.panel,
                 "pendiente": e.pendiente_json(),
                 "una_interfaz": c.una_interfaz(),
-                "ips_externas": leer::ips_externas(&c),
+                "ips_externas": ips_wan_json(&e.ips_wan(&c)),
                 "avisos": nft::avisos(&c, e.sistema.ahora()),
                 "tarjetas_de_zona": c.zonas.iter().map(|z| (z.id.clone(), c.ifaces_de(&z.id))).collect::<std::collections::BTreeMap<_, _>>(),
             }))
@@ -904,7 +913,7 @@ async fn ordenar_reglas(State(e): E, h: HeaderMap, Json(b): Json<CuerpoOrden>) -
 }
 
 /// Estado en llano de un reenvío para la lista.
-fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
+fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64, wan: &[(String, IpAddr, bool)]) -> Value {
     let estado = if !r.activo || r.caduca.is_some_and(|x| x <= ahora) {
         "desactivada"
     } else {
@@ -918,7 +927,7 @@ fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
         o.insert("conexiones".into(), json!(v.contadores.get(&clave).map(|x| x.0).unwrap_or(0)));
         o.insert("ultima".into(), json!(v.ultima.get(&clave)));
         o.insert("como_conectarse".into(), json!(como_conectarse(c, r)));
-        o.insert("avisos".into(), json!(validar::avisos_reenvio(c, r)));
+        o.insert("avisos".into(), json!(validar::avisos_reenvio(c, r, wan)));
     }
     x
 }
@@ -926,9 +935,10 @@ fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
 async fn reenvios(State(e): E) -> R {
     let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
     let ahora = e.sistema.ahora();
+    let wan = e.ips_wan(&c);
     let v = e.vivo.lock().unwrap();
-    let l: Vec<Value> = c.reenvios.iter().map(|r| vista_reenvio(&c, r, &v, ahora)).collect();
-    Ok(Json(json!({ "reenvios": l, "ips_externas": leer::ips_externas(&c), "una_interfaz": c.una_interfaz() })).into_response())
+    let l: Vec<Value> = c.reenvios.iter().map(|r| vista_reenvio(&c, r, &v, ahora, &wan)).collect();
+    Ok(Json(json!({ "reenvios": l, "ips_externas": ips_wan_json(&wan), "una_interfaz": c.una_interfaz() })).into_response())
 }
 
 async fn crear_reenvio(State(e): E, h: HeaderMap, Json(b): Json<CuerpoReenvio>) -> R {
@@ -982,6 +992,12 @@ async fn accion_reenvio(State(e): E, h: HeaderMap, Path((id, accion)): Path<(u64
             let i = c.reenvios.iter().position(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
             match accion.as_str() {
                 "activar" => {
+                    if let Some((con, otro)) = validar::choca_con(c, &c.reenvios[i]) {
+                        return Err(Fallo(
+                            StatusCode::CONFLICT,
+                            json!({ "error": format!("No se puede reanudar: choca con «{otro}»."), "con": con }),
+                        ));
+                    }
                     c.reenvios[i].activo = true;
                     Ok(None)
                 }
@@ -1019,7 +1035,7 @@ async fn comprobar_reenvio(State(e): E, Json(b): Json<CuerpoReenvio>) -> R {
     let wan_privada = !externas.is_empty() && externas.iter().all(|i| i.is_private() || (i.octets()[0] == 100 && (64..128).contains(&i.octets()[1])));
     Ok(Json(json!({
         "errores": errores,
-        "avisos": validar::avisos_reenvio(&c, &r),
+        "avisos": validar::avisos_reenvio(&c, &r, &e.ips_wan(&c)),
         "siguiente_libre": siguiente,
         "como_conectarse": como_conectarse(&c, &r),
         "wan_privada": wan_privada,

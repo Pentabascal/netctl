@@ -532,3 +532,23 @@ async fn crear_nat_202() {
     let (st, _) = pedir(&p, "DELETE", &format!("/nat/{id}?revision={rev}"), None).await;
     assert_eq!(st, StatusCode::ACCEPTED);
 }
+
+#[tokio::test]
+async fn reanudar_con_choque_409() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "POST", "/reenvios", Some(json!({"reenvio": reenvio_json(25565), "revision": revision(&p).await}))).await;
+    let id = v["id"].as_u64().unwrap();
+    let (_, v) = pedir(&p, "POST", &format!("/reenvios/{id}/duplicar"), Some(json!({"revision": revision(&p).await}))).await;
+    let copia = v["id"].as_u64().unwrap();
+    let (st, v) = pedir(&p, "POST", &format!("/reenvios/{copia}/activar"), Some(json!({"revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"], "No se puede reanudar: choca con «Escritorio de Ana».");
+    assert_eq!(v["con"], id);
+}
+
+#[tokio::test]
+async fn config_ips_externas_con_iface() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert_eq!(v["ips_externas"], json!([{"iface": "eth0", "ip": "203.0.113.4", "dinamica": false}]));
+}

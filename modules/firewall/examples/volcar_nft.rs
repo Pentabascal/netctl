@@ -4,7 +4,7 @@ use netctl_mod_firewall::modelo::*;
 use netctl_mod_firewall::nft;
 
 fn iface(n: &str, ip: &str) -> Iface {
-    Iface { nombre: n.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true }
+    Iface { nombre: n.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true, dinamicas: vec![] }
 }
 
 fn main() {
@@ -30,14 +30,14 @@ fn main() {
         accion: Accion::Bloquear, protocolo: Protocolo::Icmp, puertos: Puertos::Cualquiera, origen: Direccion::Cualquiera,
         destino: Direccion::Ip { red: "fd00::/8".parse().unwrap() }, log: false, activa: true, ..Default::default() });
     c.reenvios.push(Reenvio { id: 6, nombre: "Minecraft".into(), equipo: Direccion::Ip { red: "192.168.1.20/32".parse().unwrap() },
-        protocolo: Protocolo::Tcp, externo: vec![RangoPuerto::uno(25565)], interno: None, wan: None, desde: vec![], caduca: None,
+        protocolo: Protocolo::Tcp, externo: vec![RangoPuerto::uno(25565)], interno: None, wan: None, wan_ip: None, desde: vec![], caduca: None,
         loopback: true, activo: true, log: true, plantilla: None });
     c.reenvios.push(Reenvio { id: 7, nombre: "SSH NAS".into(), equipo: Direccion::Ip { red: "192.168.1.21/32".parse().unwrap() },
-        protocolo: Protocolo::Tcp, externo: vec![RangoPuerto::uno(2222)], interno: Some(22), wan: Some("eth0".into()),
+        protocolo: Protocolo::Tcp, externo: vec![RangoPuerto::uno(2222)], interno: Some(22), wan: Some("eth0".into()), wan_ip: None,
         desde: vec![Direccion::Ip { red: "198.51.100.7/32".parse().unwrap() }, Direccion::Grupo { id: 1 }], caduca: None,
         loopback: true, activo: true, log: false, plantilla: None });
     c.reenvios.push(Reenvio { id: 8, nombre: "Juegos".into(), equipo: Direccion::Ip { red: "192.168.1.22/32".parse().unwrap() },
-        protocolo: Protocolo::TcpUdp, externo: vec![RangoPuerto { desde: 27015, hasta: 27030 }], interno: None, wan: None,
+        protocolo: Protocolo::TcpUdp, externo: vec![RangoPuerto { desde: 27015, hasta: 27030 }], interno: None, wan: None, wan_ip: None,
         desde: vec![], caduca: None, loopback: true, activo: true, log: false, plantilla: None });
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "hotspot") {
