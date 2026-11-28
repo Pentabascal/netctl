@@ -367,7 +367,7 @@ impl Config {
             .iter()
             .map(|(id, nombre, tipo)| Zona { id: (*id).into(), nombre: (*nombre).into(), tipo: *tipo })
             .collect();
-        let nat = ["interna", "vpn", "dmz"].iter().map(|z| (z.to_string(), true)).collect();
+        let nat = ["interna", "vpn", "dmz", "hotspot"].iter().map(|z| (z.to_string(), true)).collect();
         Config {
             revision: 0,
             zonas,
@@ -389,6 +389,9 @@ impl Config {
         for (id, nombre, tipo) in ZONAS_DE_SERIE {
             if self.zona(id).is_none() && !self.zonas.iter().any(|z| z.tipo == tipo) {
                 self.zonas.push(Zona { id: id.into(), nombre: nombre.into(), tipo });
+                if tipo == TipoZona::Hotspot {
+                    self.nat.insert(id.into(), true);
+                }
             }
         }
     }
@@ -477,6 +480,7 @@ mod tests {
         assert_eq!(c.nat.get("interna"), Some(&true));
         assert_eq!(c.nat.get("vpn"), Some(&true));
         assert_eq!(c.nat.get("dmz"), Some(&true));
+        assert_eq!(c.nat.get("hotspot"), Some(&true));
     }
 
     #[test]
@@ -526,6 +530,7 @@ mod tests {
         assert!(c.zona("hotspot").is_none());
         c.completar_zonas();
         assert_eq!(c.zona("hotspot").unwrap().tipo, TipoZona::Hotspot);
+        assert_eq!(c.nat.get("hotspot"), Some(&true));
         let n = c.zonas.len();
         c.completar_zonas();
         assert_eq!(c.zonas.len(), n);
