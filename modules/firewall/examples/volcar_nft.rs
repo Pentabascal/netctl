@@ -105,6 +105,10 @@ fn main() {
         c.reglas.push(Regla { id: 40, nombre: "Sin TikTok".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
             accion: Accion::Rechazar, destino: Direccion::Dominio { nombres: vec!["tiktok.com".into()] }, ..Default::default() });
     }
+    if args.iter().any(|a| a == "app") {
+        c.reglas.push(Regla { id: 42, nombre: "Sin TikTok (app)".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
+            accion: Accion::Bloquear, destino: Direccion::App { apps: vec![292, 7], nombres: vec![] }, ..Default::default() });
+    }
     let pais = args.iter().any(|a| a == "pais");
     if pais {
         c.reglas.push(Regla { id: 41, nombre: "Fuera China".into(), origen_zona: "externa".into(), destino_zona: "gateway".into(),

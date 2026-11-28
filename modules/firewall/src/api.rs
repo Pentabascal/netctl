@@ -55,6 +55,8 @@ struct EstadoGeo {
 }
 
 pub struct Estado {
+    /// Respuesta de `netctl-dpi apps` cuando la librería está (no cambia mientras corre).
+    apps: std::sync::Mutex<Option<Value>>,
     geo: Arc<std::sync::Mutex<EstadoGeo>>,
     /// IPs vistas de los destinos por dominio.
     dominios: Arc<std::sync::Mutex<crate::dominios::Cache>>,
@@ -97,6 +99,7 @@ impl Estado {
             ultimas_fijas: Default::default(),
             dominios: Default::default(),
             geo: Default::default(),
+            apps: Default::default(),
         }))
     }
 
@@ -485,6 +488,7 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/politicas", get(politicas))
         .route("/tabla", get(tabla))
         .route("/geo", get(ver_geo))
+        .route("/apps", get(ver_apps))
         .route("/zonas", post(crear_zona))
         .route("/zonas/{id}", put(editar_zona).delete(borrar_zona))
         .route("/reenvios", get(reenvios).post(crear_reenvio))
@@ -769,6 +773,8 @@ fn texto_dir(c: &Config, d: &Direccion) -> String {
         Direccion::Mac { mac } => format!("MAC {mac}"),
         Direccion::Dominio { nombres } => nombres.join(", "),
         Direccion::Pais { codigos } => format!("País {}", codigos.join(", ")),
+        Direccion::App { nombres, .. } if !nombres.is_empty() => nombres.join(", "),
+        Direccion::App { apps, .. } => format!("App {}", apps.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ")),
     }
 }
 
@@ -933,6 +939,30 @@ async fn tabla(State(e): E) -> R {
         }));
     }
     Ok(Json(Value::Array(filas)).into_response())
+}
+
+/// Apps que conoce la libndpi del sistema, preguntando al ayudante `netctl-dpi`.
+async fn ver_apps(State(e): E) -> Json<Value> {
+    if let Some(v) = e.apps.lock().unwrap().clone() {
+        return Json(v);
+    }
+    let (s, ruta) = (e.sistema.clone(), e.rutas.dpi.clone());
+    let r = tokio::task::spawn_blocking(move || s.ejecutar(&ruta.to_string_lossy(), &["apps"], None)).await;
+    let v = match r.ok().and_then(Result::ok).and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+        Some(v) => v,
+        None => json!({ "disponible": false, "motivo": "Falta el ayudante netctl-dpi: vuelve a instalar el módulo Firewall." }),
+    };
+    if v["disponible"] == true {
+        *e.apps.lock().unwrap() = Some(v.clone());
+    }
+    Json(v)
+}
+
+impl Estado {
+    /// ¿Hay reglas de App activas? Entonces tiene que correr `netctl-dpi cola`.
+    pub fn necesita_dpi(&self) -> bool {
+        self.actual().ok().flatten().is_some_and(|c| !nft::parejas_app(&c).is_empty())
+    }
 }
 
 /// Estado de la base de países y los países que se pueden elegir.

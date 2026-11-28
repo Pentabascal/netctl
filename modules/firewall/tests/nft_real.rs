@@ -43,6 +43,12 @@ fn pais_carga() {
     carga(&["pais"]);
 }
 
+/// Cadena `dpi` con la cola y reglas que comparan `ct mark`.
+#[test]
+fn app_carga() {
+    carga(&["app"]);
+}
+
 fn carga(args: &[&str]) {
     let script = Command::new(env!("CARGO"))
         .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft", "--"])

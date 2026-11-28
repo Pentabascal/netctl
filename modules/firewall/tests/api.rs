@@ -603,3 +603,17 @@ async fn geo_sin_base_avisa_y_lista_paises() {
     let a = v["avisos"].to_string();
     assert!(a.contains("base de países"), "{a}");
 }
+
+#[tokio::test]
+async fn apps_sin_ayudante_o_sin_libreria() {
+    let p = montar();
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["disponible"], false, "{v}");
+    let ruta = p.rutas.dpi.to_string_lossy().to_string();
+    p.s.responder(&format!("{ruta} apps"), Ok(r#"{"disponible":false,"motivo":"No está instalada la librería nDPI (paquete libndpi)."}"#));
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["motivo"], "No está instalada la librería nDPI (paquete libndpi).");
+    p.s.responder(&format!("{ruta} apps"), Ok(r#"{"disponible":true,"version":"5.0.0","apps":[{"id":126,"nombre":"YouTube","categoria":"Media"}]}"#));
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["apps"][0]["nombre"], "YouTube");
+}

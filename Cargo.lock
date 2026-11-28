@@ -2560,6 +2560,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "netctl-dpi"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "nfq",
+ "serde_json",
+]
+
+[[package]]
 name = "netctl-mod-firewall"
 version = "0.3.0"
 dependencies = [
@@ -2609,6 +2618,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "nfq"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b36d0d229b49eb06057d61a09d7bcba023e31920530ddd00031d6ce6d256ccfe"
+dependencies = [
+ "bytes",
+ "libc",
+ "rustix 1.1.6",
+ "zerocopy",
 ]
 
 [[package]]

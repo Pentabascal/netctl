@@ -121,6 +121,13 @@ pub enum Direccion {
     Dominio { nombres: Vec<String> },
     /// Países (ISO 3166 alfa-2 en mayúsculas) según la base de DB-IP.
     Pais { codigos: Vec<String> },
+    /// Apps detectadas con nDPI (ids de protocolo de nDPI), solo como destino hacia Externa.
+    App {
+        apps: Vec<u16>,
+        /// Nombres para enseñarlos (los pone la interfaz; no cuentan para nftables).
+        #[serde(default)]
+        nombres: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,6 +189,10 @@ impl Default for Regla {
 }
 
 impl Regla {
+    pub fn es_app(&self) -> bool {
+        matches!(self.destino, Direccion::App { .. })
+    }
+
     /// Las reglas que miran conexiones ya abiertas van antes del `established,related accept`.
     pub fn corta_establecidas(&self) -> bool {
         matches!(&self.estado, EstadoConexion::Elegir(v) if v.iter().any(|e| matches!(e, Estado::Establecida | Estado::Relacionada)))

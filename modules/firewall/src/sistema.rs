@@ -146,6 +146,8 @@ pub struct Rutas {
     pub proc_route: PathBuf,
     /// `/etc` (copia de /etc/firewalld y /etc/ufw al instalar)
     pub etc: PathBuf,
+    /// Ayudante `netctl-dpi` (junto al binario del módulo).
+    pub dpi: PathBuf,
 }
 
 impl Rutas {
@@ -156,6 +158,10 @@ impl Rutas {
             wireguard: "/etc/wireguard".into(),
             proc_route: "/proc/net/route".into(),
             etc: "/etc".into(),
+            dpi: std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("netctl-dpi")))
+                .unwrap_or_else(|| "netctl-dpi".into()),
         }
     }
 
@@ -166,6 +172,7 @@ impl Rutas {
             wireguard: raiz.join("etc/wireguard"),
             proc_route: raiz.join("proc/net/route"),
             etc: raiz.join("etc"),
+            dpi: raiz.join("bin/netctl-dpi"),
         }
     }
 }

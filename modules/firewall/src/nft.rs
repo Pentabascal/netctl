@@ -10,6 +10,11 @@ use crate::modelo::*;
 use crate::nombre_seguro;
 use crate::validar::{ip_reenvio, validar};
 
+/// Marca que pone `netctl-dpi` a una conexión clasificada: bit 16 + id de app de nDPI.
+pub const MARCA_APP: u32 = 0x10000;
+/// Cola NFQUEUE de `netctl-dpi`.
+pub const COLA_DPI: u16 = 100;
+
 const PRIVADAS4: &str = "{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16 }";
 const PRIVADAS6: &str = "{ fc00::/7, fe80::/10, ::1 }";
 
@@ -93,6 +98,10 @@ fn dir_txt(c: &Config, d: &Direccion, lado: &str, paises: &crate::geo::Paises) -
         Direccion::Mac { mac } => vec![(Fam::Ambas, format!("ether {lado} {mac}"))],
         // Los conjuntos van por regla: los pone `reglas_usuario` (aquí no se sabe el id).
         Direccion::Dominio { .. } => vec![],
+        Direccion::App { apps, .. } => {
+            let l: Vec<String> = apps.iter().map(|a| format!("{:#x}", MARCA_APP | u32::from(*a))).collect();
+            vec![(Fam::Ambas, format!("ct mark {{ {} }}", l.join(", ")))]
+        }
         // Solo los países que ya tienen conjunto (sin base aún, la regla no sale).
         Direccion::Pais { codigos } => {
             let mut v = vec![];
@@ -362,13 +371,19 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     t.push_str("\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;\n");
     let entre_zonas: Vec<&&Regla> = reglas.iter().filter(|r| !gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona)).collect();
     let fwd = |t: &mut String, cortan: bool| {
-        for r in entre_zonas.iter().filter(|r| r.corta_establecidas() == cortan) {
+        // Las de App miran también los paquetes de conexiones ya abiertas: la app se sabe
+        // después de los primeros paquetes.
+        for r in entre_zonas.iter().filter(|r| (r.corta_establecidas() || r.es_app()) == cortan) {
             let (o, d) = (c.ifaces_de(&r.origen_zona), c.ifaces_de(&r.destino_zona));
             if !o.is_empty() && !d.is_empty() {
                 reglas_usuario(t, c, f, r, &format!("iifname {}", lista_ifaces(&o)), &format!("oifname {}", lista_ifaces(&d)), ahora);
             }
         }
     };
+    let parejas_app = parejas_app(c);
+    if !parejas_app.is_empty() {
+        let _ = writeln!(t, "\t\tmeta mark & 0xffff0000 == {MARCA_APP:#x} ct mark set meta mark");
+    }
     fwd(&mut t, true);
     t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n\t\tct status dnat accept\n");
     fwd(&mut t, false);
@@ -481,6 +496,22 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
             post.push_str(&l);
         }
     }
+    // ---- dpi: los primeros paquetes de las parejas con reglas de App van a `netctl-dpi`.
+    // Con `bypass`, si el ayudante no está, el tráfico pasa.
+    if !parejas_app.is_empty() {
+        t.push_str("\tchain dpi {\n\t\ttype filter hook forward priority filter - 5; policy accept;\n");
+        for (o, d) in &parejas_app {
+            for (a, b) in [(o, d), (d, o)] {
+                let _ = writeln!(
+                    t,
+                    "\t\tiifname {} oifname {} ct mark 0 meta l4proto {{ tcp, udp }} ct original packets < 13 counter queue num {COLA_DPI} bypass",
+                    lista_ifaces(a),
+                    lista_ifaces(b)
+                );
+            }
+        }
+        t.push_str("\t}\n");
+    }
     let (pre_propio, post_propio) = nat_propio(c);
     t.push_str("\tchain prerouting {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n");
     t.push_str(&pre_propio);
@@ -501,6 +532,18 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     }
     t.push_str("\t}\n}\n");
     Ok(t)
+}
+
+/// Parejas de tarjetas (origen, destino) de las reglas activas de App, sin repetir.
+pub fn parejas_app(c: &Config) -> Vec<(Vec<String>, Vec<String>)> {
+    let mut v: Vec<(Vec<String>, Vec<String>)> = vec![];
+    for r in c.reglas.iter().filter(|r| r.activa && r.es_app()) {
+        let p = (c.ifaces_de(&r.origen_zona), c.ifaces_de(&r.destino_zona));
+        if !p.0.is_empty() && !p.1.is_empty() && !v.contains(&p) {
+            v.push(p);
+        }
+    }
+    v
 }
 
 /// ¿Hay un Masquerade propio sin más condiciones que ya hace lo mismo que el NAT automático
@@ -1091,5 +1134,42 @@ mod tests {
         assert!(t.contains("set dom30_6 { type ipv6_addr; }"), "{t}");
         assert!(t.contains("ip daddr @dom30_4 tcp dport 80 counter drop"), "{t}");
         assert!(t.contains("ip6 daddr @dom30_6 tcp dport 80 counter drop"), "{t}");
+    }
+
+    fn con_app() -> Config {
+        let mut c = router();
+        let mut r = regla(32, "interna", "externa", Accion::Bloquear);
+        r.protocolo = Protocolo::Cualquiera;
+        r.puertos = Puertos::Cualquiera;
+        r.destino = Direccion::App { apps: vec![126, 7], nombres: vec![] };
+        c.reglas.push(r);
+        c
+    }
+
+    #[test]
+    fn cola_con_bypass() {
+        let t = generado(&con_app());
+        let dpi = &t[pos(&t, "chain dpi")..pos(&t, "chain prerouting")];
+        assert!(dpi.contains("type filter hook forward priority filter - 5; policy accept;"), "{dpi}");
+        assert!(dpi.contains("iifname { \"eth1\" } oifname { \"eth0\" } ct mark 0 meta l4proto { tcp, udp } ct original packets < 13 counter queue num 100 bypass"), "{dpi}");
+        assert!(dpi.contains("iifname { \"eth0\" } oifname { \"eth1\" } ct mark 0"), "la vuelta también: {dpi}");
+    }
+
+    #[test]
+    fn app_compara_ct_mark() {
+        let t = generado(&con_app());
+        let fwd = &t[pos(&t, "chain forward")..pos(&t, "chain output")];
+        let copia = pos(fwd, "meta mark & 0xffff0000 == 0x10000 ct mark set meta mark");
+        let regla = pos(fwd, "ct mark { 0x1007e, 0x10007 } counter drop comment \"r32_");
+        let est = pos(fwd, "ct state established,related accept");
+        assert!(copia < regla && regla < est, "{fwd}");
+    }
+
+    #[test]
+    fn sin_reglas_app_sin_cola() {
+        let t = generado(&router());
+        assert!(!t.contains("queue"), "{t}");
+        assert!(!t.contains("chain dpi"));
+        assert!(!t.contains("ct mark set"));
     }
 }
