@@ -179,11 +179,22 @@ fn extraer_en(tar_gz: &[u8], destino: &Path) -> Result<(), String> {
 pub fn unidad(rutas: &Rutas, m: &Manifiesto) -> String {
     let nombre: String = m.nombre.chars().filter(|c| !c.is_control()).collect();
     let id = &m.id;
+    let orden = if m.arranque_temprano {
+        // Antes que la red: así no hay un momento sin reglas al arrancar la máquina.
+        "DefaultDependencies=no\n\
+         Before=network-pre.target\n\
+         Wants=network-pre.target\n\
+         After=local-fs.target\n\
+         Before=shutdown.target\n\
+         Conflicts=shutdown.target\n"
+    } else {
+        "After=network-online.target\n\
+         Wants=network-online.target\n"
+    };
     format!(
         "[Unit]\n\
          Description=netctl: módulo {nombre}\n\
-         After=network-online.target\n\
-         Wants=network-online.target\n\
+         {orden}\
          \n\
          [Service]\n\
          ExecStart={bin}\n\
@@ -483,6 +494,22 @@ mod tests {
             &sha,
         );
         (dir, env, doble, e)
+    }
+
+    #[test]
+    fn unidad_temprana() {
+        let d = tempfile::tempdir().unwrap();
+        let rutas = rutas_prueba(d.path());
+        let toml = "id = \"firewall\"\nnombre = \"Firewall\"\nversion = \"0.1.0\"\nnucleo_minimo = \"0.2.0\"\n";
+        let normal = unidad(&rutas, &Manifiesto::leer(toml).unwrap());
+        assert!(normal.contains("After=network-online.target"));
+        assert!(!normal.contains("network-pre"));
+        let m = Manifiesto::leer(&format!("arranque_temprano = true\n{toml}")).unwrap();
+        let u = unidad(&rutas, &m);
+        for l in ["DefaultDependencies=no", "Before=network-pre.target", "Wants=network-pre.target", "After=local-fs.target", "Before=shutdown.target", "Conflicts=shutdown.target"] {
+            assert!(u.lines().any(|x| x == l), "falta «{l}» en\n{u}");
+        }
+        assert!(!u.contains("network-online"));
     }
 
     #[tokio::test]

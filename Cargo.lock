@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "netctl-core"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "netctl-mod-wireguard"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",

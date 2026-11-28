@@ -34,6 +34,9 @@ pub struct Manifiesto {
     pub paquetes: Paquetes,
     #[serde(default)]
     pub conflictos: Vec<String>,
+    /// El servicio arranca antes que la red (`Before=network-pre.target`): el Firewall.
+    #[serde(default)]
+    pub arranque_temprano: bool,
 }
 
 impl Manifiesto {
@@ -87,6 +90,13 @@ rhel = ["wireguard-tools", "nftables"]
         assert_eq!(m.menu[1].icono, "");
         assert_eq!(m.paquetes.suse, ["wireguard-tools", "nftables"]);
         assert_eq!(m.conflictos, ["wg-quick@wg0"]);
+    }
+
+    #[test]
+    fn arranque_temprano() {
+        assert!(!Manifiesto::leer(EJEMPLO).unwrap().arranque_temprano);
+        let m = Manifiesto::leer(&format!("arranque_temprano = true\n{EJEMPLO}")).unwrap();
+        assert!(m.arranque_temprano);
     }
 
     #[test]

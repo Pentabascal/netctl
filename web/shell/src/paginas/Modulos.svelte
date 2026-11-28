@@ -14,6 +14,7 @@
   let mensaje = $state(null); // { tipo, texto }
   let quitar = $state(null); // módulo a desinstalar
   let borrarDatos = $state(false);
+  let restaurar = $state(true);
   let copiado = $state(false);
 
   async function cargarCatalogo() {
@@ -41,7 +42,7 @@
     ocupado[id] = tipo;
     mensaje = null;
     try {
-      if (tipo === 'desinstalar') await apiNucleo.post(`/api/modulos/${id}/desinstalar`, { borrar_datos: borrarDatos });
+      if (tipo === 'desinstalar') await apiNucleo.post(`/api/modulos/${id}/desinstalar`, { borrar_datos: borrarDatos, restaurar });
       else await apiNucleo.post(`/api/modulos/${id}/${tipo}`);
       const hecho = { instalar: 'instalado', actualizar: 'actualizado', desinstalar: 'quitado' }[tipo];
       mensaje = { tipo: 'ok', texto: `${nombre} se ha ${hecho} correctamente.` };
@@ -209,6 +210,21 @@
   </div>
   {#if borrarDatos}
     <Aviso tipo="aviso">Los datos borrados no se pueden recuperar.</Aviso>
+  {/if}
+  {#if quitar?.id === 'firewall'}
+    <div class="opcion">
+      <div>
+        <strong>Volver al firewall que había antes (recomendado)</strong>
+        <p>
+          Si al instalarlo se apagó firewalld o ufw, se vuelve a encender con su configuración de entonces. Si lo
+          apagas, la máquina se queda sin firewall.
+        </p>
+      </div>
+      <Interruptor bind:activo={restaurar} etiqueta="Volver al firewall que había antes" />
+    </div>
+    {#if !restaurar}
+      <Aviso tipo="aviso">Sin firewall, todo lo que escuche en esta máquina quedará abierto a la red.</Aviso>
+    {/if}
   {/if}
   {#snippet pie()}
     <Boton onclick={() => (quitar = null)}>Cancelar</Boton>

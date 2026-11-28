@@ -520,6 +520,7 @@ pub fn router(e: Arc<Estado>) -> Router {
     Router::new()
         .route("/salud", get(|| async { "ok" }))
         .route("/resumen", get(resumen))
+        .route("/equipos", get(equipos))
         .route("/evento", post(evento))
         .route("/vivo", get(vivo))
         .route("/asistente", get(sugerir).post(asistente))
@@ -542,6 +543,32 @@ pub fn router(e: Arc<Estado>) -> Router {
             axum::routing::put(editar_subred).delete(borrar_subred),
         )
         .with_state(e)
+}
+
+/// Clientes VPN para la lista de equipos del núcleo (selector de equipos).
+async fn equipos(State(e): E) -> Json<Value> {
+    let g = e.doc.lock().await;
+    let Some(d) = g.as_ref() else { return Json(json!([])) };
+    let v = e.vivo.borrow().clone();
+    let vista = vista_clientes(d, &v);
+    let l: Vec<Value> = vista["clientes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            json!({
+                "nombre": c["nombre"],
+                "ip": c["ip"].as_str().unwrap_or("").split('/').next().unwrap_or(""),
+                "mac": "",
+                "red": "VPN",
+                "conectado": c["estado"]["conectado"],
+                "desactivado": c["activo"] == json!(false),
+                "origen": "vpn",
+                "id": c["clave_publica"],
+            })
+        })
+        .collect();
+    Json(Value::Array(l))
 }
 
 async fn resumen(State(e): E) -> Json<Value> {

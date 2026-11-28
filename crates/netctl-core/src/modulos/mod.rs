@@ -285,16 +285,51 @@ impl Gestor {
         Ok(())
     }
 
-    pub async fn desinstalar(&self, id: &str, borrar_datos: bool) -> Result<(), ErrorGestor> {
+    /// `restaurar`: el módulo deshace lo que cambió en el sistema (el Firewall vuelve a
+    /// activar firewalld/ufw). Se le avisa con `POST /evento {"tipo":"desinstalando"}` antes
+    /// de pararlo; si no responde en 10 s, se sigue igualmente.
+    pub async fn desinstalar(&self, id: &str, borrar_datos: bool, restaurar: bool) -> Result<(), ErrorGestor> {
         let _g = self.cerrojo.try_lock().map_err(|_| ErrorGestor::Ocupado)?;
         if !self.instalados().iter().any(|m| m.id == id) {
             return Err(ErrorGestor::NoExiste);
+        }
+        let cuerpo = json!({ "tipo": "desinstalando", "restaurar": restaurar }).to_string();
+        let req = axum::http::Request::post("/evento")
+            .header("host", "localhost")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(cuerpo))
+            .unwrap();
+        let r = tokio::time::timeout(Duration::from_secs(10), crate::proxy::enviar(&self.rutas().socket(id), req)).await;
+        if !matches!(r, Ok(Ok(ref resp)) if resp.status().is_success()) {
+            eprintln!("Aviso: el módulo {id} no respondió al aviso de desinstalación");
         }
         instalar::desinstalar(&self.entorno, id, borrar_datos)
             .await
             .map_err(ErrorGestor::Instalar)?;
         self.notificar().await;
         Ok(())
+    }
+
+    /// Equipos de la red: `extra` (vecinos que ve el núcleo) más los `GET /equipos` de cada
+    /// módulo (el que no lo tenga se ignora), sin repetidos.
+    pub async fn equipos(&self, extra: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+        let mut listas = vec![extra];
+        for m in self.instalados() {
+            let req = axum::http::Request::get("/equipos")
+                .header("host", "localhost")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let r = tokio::time::timeout(Duration::from_secs(3), crate::proxy::enviar(&self.rutas().socket(&m.id), req)).await;
+            let Ok(Ok(resp)) = r else { continue };
+            if !resp.status().is_success() {
+                continue;
+            }
+            let Ok(b) = http_body_util::BodyExt::collect(resp.into_body()).await else { continue };
+            if let Ok(serde_json::Value::Array(l)) = serde_json::from_slice(&b.to_bytes()) {
+                listas.push(l);
+            }
+        }
+        juntar_equipos(listas)
     }
 
     /// `POST /evento {"tipo":"modulos_cambiados","modulos":[ids]}` a cada módulo instalado.
@@ -397,6 +432,59 @@ async fn instalar_ruta(Extension(g): G, RutaUrl(id): RutaUrl<String>) -> Respons
 struct PeticionDesinstalar {
     #[serde(default)]
     borrar_datos: bool,
+    #[serde(default)]
+    restaurar: bool,
+}
+
+/// Junta listas de equipos sin repetir (por MAC; sin MAC, por IP). De los repetidos se queda
+/// con el primer nombre no vacío y «conectado» si alguno lo está. Los conectados van primero.
+pub fn juntar_equipos(listas: Vec<Vec<serde_json::Value>>) -> Vec<serde_json::Value> {
+    let mut v: Vec<serde_json::Value> = vec![];
+    for l in listas {
+        for mut e in l {
+            let mac = e["mac"].as_str().unwrap_or("").to_lowercase();
+            e["mac"] = json!(mac);
+            let clave = |x: &serde_json::Value| {
+                let m = x["mac"].as_str().unwrap_or("");
+                if m.is_empty() { format!("ip:{}", x["ip"].as_str().unwrap_or("")) } else { m.to_string() }
+            };
+            let k = clave(&e);
+            match v.iter_mut().find(|x| clave(x) == k) {
+                Some(x) => {
+                    if x["nombre"].as_str().unwrap_or("").is_empty() && !e["nombre"].as_str().unwrap_or("").is_empty() {
+                        x["nombre"] = e["nombre"].clone();
+                    }
+                    if e["conectado"] == json!(true) {
+                        x["conectado"] = json!(true);
+                        x["ip"] = e["ip"].clone();
+                    }
+                }
+                None => v.push(e),
+            }
+        }
+    }
+    v.sort_by_key(|e| (e["conectado"] != json!(true), e["ip"].as_str().unwrap_or("").to_string()));
+    v
+}
+
+/// `ip -j neigh` → equipos (solo los que tienen MAC).
+pub fn vecinos_de_json(j: &str) -> Vec<serde_json::Value> {
+    let Ok(serde_json::Value::Array(l)) = serde_json::from_str::<serde_json::Value>(j) else { return vec![] };
+    l.iter()
+        .filter_map(|n| {
+            let ip = n["dst"].as_str()?;
+            let mac = n["lladdr"].as_str()?.to_lowercase();
+            let estados: Vec<&str> = n["state"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+            let conectado = estados.iter().any(|e| matches!(*e, "REACHABLE" | "DELAY" | "PROBE" | "PERMANENT"));
+            Some(json!({ "nombre": "", "ip": ip, "mac": mac, "red": n["dev"].as_str().unwrap_or(""), "conectado": conectado, "origen": "red" }))
+        })
+        .collect()
+}
+
+async fn equipos_ruta(Extension(g): G) -> Response {
+    let salida = tokio::process::Command::new("ip").args(["-j", "neigh"]).output().await;
+    let propios = salida.ok().filter(|o| o.status.success()).map(|o| vecinos_de_json(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default();
+    Json(g.equipos(propios).await).into_response()
 }
 
 async fn desinstalar_ruta(
@@ -408,7 +496,7 @@ async fn desinstalar_ruta(
         return ErrorGestor::NoExiste.into_response();
     }
     let p = cuerpo.map(|Json(p)| p).unwrap_or_default();
-    match g.desinstalar(&id, p.borrar_datos).await {
+    match g.desinstalar(&id, p.borrar_datos, p.restaurar).await {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => e.into_response(),
     }
@@ -418,6 +506,7 @@ async fn desinstalar_ruta(
 pub fn rutas(g: Arc<Gestor>) -> Router<Compartido> {
     Router::new()
         .route("/api/modulos", get(listar))
+        .route("/api/equipos", get(equipos_ruta))
         .route("/api/catalogo", get(ver_catalogo))
         .route("/api/modulos/{id}/instalar", post(instalar_ruta))
         .route("/api/modulos/{id}/actualizar", post(instalar_ruta))
@@ -813,5 +902,104 @@ mod tests {
             "instalado {id} ({} bytes); systemd: {llamadas:?}",
             meta.len()
         );
+    }
+
+    /// Módulo falso que guarda los cuerpos de `/evento` y responde `/equipos` con `equipos`.
+    async fn modulo_eventos(
+        socket: &Path,
+        equipos: serde_json::Value,
+    ) -> (Arc<std::sync::Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        let vistos = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let v2 = vistos.clone();
+        let r = Router::new()
+            .route("/salud", get(|| async { "ok" }))
+            .route(
+                "/evento",
+                post(move |cuerpo: String| {
+                    let v = v2.clone();
+                    async move {
+                        v.lock().unwrap().push(cuerpo);
+                        "ok"
+                    }
+                }),
+            )
+            .route("/equipos", get(move || async move { Json(equipos.clone()) }));
+        let s = socket.to_path_buf();
+        let h = tokio::spawn(async move { netctl_sdk::servidor::servir_en(&s, r).await.unwrap() });
+        for _ in 0..100 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        (vistos, h)
+    }
+
+    #[tokio::test]
+    async fn desinstalar_avisa_modulo() {
+        let d = tempfile::tempdir().unwrap();
+        let (g, _) = gestor(d.path(), "http://127.0.0.1:9/", None);
+        instalar::extraer(&tar_modulo("firewall", "0.1.0", "0.1.0"), &g.rutas().dir_modulo("firewall")).unwrap();
+        let (vistos, _h) = modulo_eventos(&g.rutas().socket("firewall"), json!([])).await;
+        g.desinstalar("firewall", false, true).await.unwrap();
+        let v = vistos.lock().unwrap().clone();
+        assert!(!v.is_empty(), "el módulo no recibió el aviso");
+        let e: serde_json::Value = serde_json::from_str(&v[0]).unwrap();
+        assert_eq!(e["tipo"], "desinstalando");
+        assert_eq!(e["restaurar"], true);
+        assert!(!g.rutas().dir_modulo("firewall").exists());
+    }
+
+    #[tokio::test]
+    async fn desinstalar_sin_modulo_vivo_sigue() {
+        let d = tempfile::tempdir().unwrap();
+        let (g, _) = gestor(d.path(), "http://127.0.0.1:9/", None);
+        instalar::extraer(&tar_modulo("firewall", "0.1.0", "0.1.0"), &g.rutas().dir_modulo("firewall")).unwrap();
+        g.desinstalar("firewall", false, false).await.unwrap();
+        assert!(!g.rutas().dir_modulo("firewall").exists());
+    }
+
+    #[test]
+    fn equipos_junta_y_deduplica() {
+        let red = vec![
+            json!({"nombre": "", "ip": "192.168.1.20", "mac": "aa:bb:cc:dd:ee:01", "red": "eth1", "conectado": false, "origen": "red"}),
+            json!({"nombre": "", "ip": "192.168.1.30", "mac": "AA:BB:CC:DD:EE:02", "red": "eth1", "conectado": true, "origen": "red"}),
+        ];
+        let modulo = vec![
+            json!({"nombre": "NAS", "ip": "192.168.1.20", "mac": "aa:bb:cc:dd:ee:01", "red": "eth1", "conectado": true, "origen": "red"}),
+            json!({"nombre": "Móvil de Ana", "ip": "10.8.0.2", "mac": "", "red": "VPN", "conectado": true, "origen": "vpn", "id": "clave"}),
+        ];
+        let l = juntar_equipos(vec![red, modulo]);
+        assert_eq!(l.len(), 3, "{l:?}");
+        let nas = l.iter().find(|e| e["ip"] == "192.168.1.20").unwrap();
+        assert_eq!(nas["nombre"], "NAS");
+        assert_eq!(nas["conectado"], true);
+        assert_eq!(l.iter().find(|e| e["ip"] == "192.168.1.30").unwrap()["mac"], "aa:bb:cc:dd:ee:02");
+        // los conectados primero
+        assert!(l.iter().take_while(|e| e["conectado"] == true).count() == 3);
+    }
+
+    #[test]
+    fn parsea_vecinos_nucleo() {
+        let j = r#"[{"dst":"192.168.1.20","dev":"eth1","lladdr":"aa:bb:cc:dd:ee:ff","state":["REACHABLE"]},{"dst":"192.168.1.22","dev":"eth1","state":["FAILED"]}]"#;
+        let v = vecinos_de_json(j);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0]["mac"], "aa:bb:cc:dd:ee:ff");
+        assert_eq!(v[0]["conectado"], true);
+    }
+
+    #[tokio::test]
+    async fn ruta_equipos_pregunta_a_modulos() {
+        let d = tempfile::tempdir().unwrap();
+        let (g, _) = gestor(d.path(), "http://127.0.0.1:9/", None);
+        instalar::extraer(&tar_modulo("wireguard", "0.1.0", "0.1.0"), &g.rutas().dir_modulo("wireguard")).unwrap();
+        let (_v, _h) = modulo_eventos(
+            &g.rutas().socket("wireguard"),
+            json!([{"nombre": "Móvil", "ip": "10.8.0.2", "mac": "", "red": "VPN", "conectado": true, "origen": "vpn"}]),
+        )
+        .await;
+        let l = g.equipos(vec![]).await;
+        assert_eq!(l.len(), 1);
+        assert_eq!(l[0]["nombre"], "Móvil");
     }
 }

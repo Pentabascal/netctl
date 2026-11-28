@@ -518,3 +518,31 @@ async fn interfaz_traversal_no_se_guarda_ni_borra() {
     netctl_mod_wireguard::aplicar::retirar(&*e.doble, &e.rutas, "../../root/x");
     assert!(victima.exists());
 }
+
+#[tokio::test]
+async fn equipos_lista_clientes() {
+    let e = entorno_con(Doble::default());
+    let (st, v) = pedir(&e, "GET", "/equipos", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v, json!([]), "sin servidor, lista vacía");
+    configurado(&e).await;
+    let (_, v) = pedir(&e, "GET", "/clientes", None).await;
+    let clave = v["clientes"][0]["clave_publica"].as_str().unwrap().to_string();
+    *e.doble.dump.lock().unwrap() = format!(
+        "priv\tpub\t51820\toff\n{clave}\t(none)\t203.0.113.7:4500\t10.8.0.2/32\t{}\t100\t200\t25\n",
+        1_000_000u64 - 30
+    );
+    e.estado.sondear().await;
+    let (st, v) = pedir(&e, "GET", "/equipos", None).await;
+    assert_eq!(st, StatusCode::OK);
+    let l = v.as_array().unwrap();
+    assert_eq!(l.len(), 2);
+    assert_eq!(l[0]["nombre"], "Portátil de Ana");
+    assert_eq!(l[0]["ip"], "10.8.0.2");
+    assert_eq!(l[0]["mac"], "");
+    assert_eq!(l[0]["origen"], "vpn");
+    assert_eq!(l[0]["red"], "VPN");
+    assert_eq!(l[0]["conectado"], true);
+    assert_eq!(l[0]["id"], clave);
+    assert_eq!(l[1]["conectado"], false);
+}
