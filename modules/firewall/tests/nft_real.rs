@@ -37,6 +37,12 @@ fn dominio_carga() {
     carga(&["dominio"]);
 }
 
+/// Conjuntos por país (rangos v4 y v6) como origen.
+#[test]
+fn pais_carga() {
+    carga(&["pais"]);
+}
+
 fn carga(args: &[&str]) {
     let script = Command::new(env!("CARGO"))
         .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft", "--"])

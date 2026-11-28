@@ -176,7 +176,7 @@ pub fn fijas(s: &dyn Sistema, r: &Rutas, c: &Config) -> Fijas {
         }
     }
     wg.sort();
-    Fijas { panel, alcance_internet, ssh, wg, ips_externas: ips_externas(c) }
+    Fijas { panel, alcance_internet, ssh, wg, ips_externas: ips_externas(c), paises: crate::geo::paises(c, r) }
 }
 
 /// IPv4 de la zona Externa con su tarjeta y si puede cambiar: `(iface, ip, dinámica)`.

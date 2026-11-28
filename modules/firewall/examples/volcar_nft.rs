@@ -105,7 +105,18 @@ fn main() {
         c.reglas.push(Regla { id: 40, nombre: "Sin TikTok".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
             accion: Accion::Rechazar, destino: Direccion::Dominio { nombres: vec!["tiktok.com".into()] }, ..Default::default() });
     }
-    let f = Fijas { panel: 8443, alcance_internet: false, ssh: 22, wg: vec![("wg0".into(), 51820)], ips_externas: vec!["203.0.113.4".parse().unwrap()] };
+    let pais = args.iter().any(|a| a == "pais");
+    if pais {
+        c.reglas.push(Regla { id: 41, nombre: "Fuera China".into(), origen_zona: "externa".into(), destino_zona: "gateway".into(),
+            accion: Accion::Bloquear, origen: Direccion::Pais { codigos: vec!["CN".into(), "ES".into()] }, ..Default::default() });
+    }
+    let mut f = Fijas { panel: 8443, alcance_internet: false, ssh: 22, wg: vec![("wg0".into(), 51820)], ips_externas: vec!["203.0.113.4".parse().unwrap()], paises: Default::default() };
+    if pais {
+        let b = netctl_mod_firewall::geo::analizar(include_str!("../tests/datos/dbip-mini.csv")).unwrap();
+        for cc in ["CN", "ES"] {
+            f.paises.insert(cc.into(), netctl_mod_firewall::geo::textos(&b[cc]));
+        }
+    }
     print!("{}", nft::generar(&c, &f, 1_800_000_000).unwrap());
     if dominio {
         // Lo que escribe `dominios::refrescar` justo después.

@@ -46,7 +46,16 @@ struct Vivo {
     ultima: HashMap<String, u64>,
 }
 
+/// Descarga de la base de países: si está en marcha, último intento y su error.
+#[derive(Default)]
+struct EstadoGeo {
+    descargando: bool,
+    intento: u64,
+    error: Option<String>,
+}
+
 pub struct Estado {
+    geo: Arc<std::sync::Mutex<EstadoGeo>>,
     /// IPs vistas de los destinos por dominio.
     dominios: Arc<std::sync::Mutex<crate::dominios::Cache>>,
     pub rutas: Rutas,
@@ -87,6 +96,7 @@ impl Estado {
             vivo: Default::default(),
             ultimas_fijas: Default::default(),
             dominios: Default::default(),
+            geo: Default::default(),
         }))
     }
 
@@ -149,6 +159,9 @@ impl Estado {
                     }
                 }
             }
+        }
+        if let Ok(Some(c)) = self.actual() {
+            self.geo_si_toca(&c);
         }
         // Destinos por dominio: preguntar al DNS cada 5 min y volver a llenar los conjuntos (una
         // recarga de la tabla, o el «deshacer» de los 60 s, los deja vacíos).
@@ -246,7 +259,44 @@ impl Estado {
             .expect("con confirmación siempre hay espera");
         *self.ultimas_fijas.lock().unwrap() = Some(fijas);
         crate::dominios::rellenar(nueva, &*self.sistema, &mut self.dominios.lock().unwrap());
+        self.geo_si_toca(nueva);
         Ok(e)
+    }
+
+    /// Lanza la descarga de la base de países si una regla usa países y no hay base (o es de
+    /// otro mes). Un fallo se reintenta a la hora. Al terminar, `revisar` ve que cambian las
+    /// fijas y vuelve a aplicar.
+    fn geo_si_toca(&self, c: &Config) {
+        let ahora = self.sistema.ahora();
+        if crate::geo::usados(c).is_empty() || !crate::geo::toca_actualizar(&self.rutas, ahora) {
+            return;
+        }
+        {
+            let mut g = self.geo.lock().unwrap();
+            if g.descargando || (g.intento != 0 && ahora < g.intento + 3600) {
+                return;
+            }
+            g.descargando = true;
+            g.intento = ahora;
+        }
+        let (s, r, g) = (self.sistema.clone(), self.rutas.clone(), self.geo.clone());
+        let Ok(h) = tokio::runtime::Handle::try_current() else { return };
+        h.spawn_blocking(move || {
+            let res = crate::geo::actualizar(&r, &*s);
+            let mut g = g.lock().unwrap();
+            g.descargando = false;
+            g.error = res.err();
+        });
+    }
+
+    fn avisos_geo(&self, c: &Config) -> Vec<String> {
+        let mut a = crate::geo::avisos(c, &self.rutas);
+        if let Some(e) = &self.geo.lock().unwrap().error
+            && !a.is_empty()
+        {
+            a = vec![format!("No se pudo descargar la base de países ({e}); se reintenta en una hora.")];
+        }
+        a
     }
 
     fn pendiente_json(&self) -> Value {
@@ -434,6 +484,7 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/reglas/{id}/duplicar", post(duplicar_regla))
         .route("/politicas", get(politicas))
         .route("/tabla", get(tabla))
+        .route("/geo", get(ver_geo))
         .route("/zonas", post(crear_zona))
         .route("/zonas/{id}", put(editar_zona).delete(borrar_zona))
         .route("/reenvios", get(reenvios).post(crear_reenvio))
@@ -615,7 +666,7 @@ async fn ver_config(State(e): E) -> R {
                 "pendiente": e.pendiente_json(),
                 "una_interfaz": c.una_interfaz(),
                 "ips_externas": ips_wan_json(&e.ips_wan(&c)),
-                "avisos": nft::avisos(&c, e.sistema.ahora()).into_iter().chain(e.dominios.lock().unwrap().avisos.clone()).collect::<Vec<_>>(),
+                "avisos": nft::avisos(&c, e.sistema.ahora()).into_iter().chain(e.dominios.lock().unwrap().avisos.clone()).chain(e.avisos_geo(&c)).collect::<Vec<_>>(),
                 "tarjetas_de_zona": c.zonas.iter().map(|z| (z.id.clone(), c.ifaces_de(&z.id))).collect::<std::collections::BTreeMap<_, _>>(),
             }))
             .into_response()
@@ -717,6 +768,7 @@ fn texto_dir(c: &Config, d: &Direccion) -> String {
         Direccion::Interfaz { iface } => format!("Tarjeta {iface}"),
         Direccion::Mac { mac } => format!("MAC {mac}"),
         Direccion::Dominio { nombres } => nombres.join(", "),
+        Direccion::Pais { codigos } => format!("País {}", codigos.join(", ")),
     }
 }
 
@@ -881,6 +933,18 @@ async fn tabla(State(e): E) -> R {
         }));
     }
     Ok(Json(Value::Array(filas)).into_response())
+}
+
+/// Estado de la base de países y los países que se pueden elegir.
+async fn ver_geo(State(e): E) -> Json<Value> {
+    let fecha = crate::geo::fecha(&e.rutas);
+    let descargando = e.geo.lock().unwrap().descargando;
+    let estado = if descargando { "descargando" } else if fecha.is_some() { "lista" } else { "falta" };
+    let paises: Vec<Value> = match crate::geo::base(&e.rutas) {
+        Some(b) => b.keys().filter(|c| *c != "ZZ").map(|c| json!({ "codigo": c })).collect(),
+        None => crate::geo::CODIGOS.split(' ').map(|c| json!({ "codigo": c })).collect(),
+    };
+    Json(json!({ "estado": estado, "fecha": fecha, "paises": paises, "atribucion": "IP Geolocation by DB-IP", "enlace": "https://db-ip.com" }))
 }
 
 async fn duplicar_regla(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<ConRevision>) -> R {

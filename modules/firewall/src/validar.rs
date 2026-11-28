@@ -110,8 +110,8 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
         if let Err(x) = validar_dir(c, d) {
             e.push(x);
         }
-        if matches!(d, Direccion::Dominio { .. }) {
-            e.push("En «Solo desde estas IPs» no se pueden usar dominios.".into());
+        if matches!(d, Direccion::Dominio { .. } | Direccion::Pais { .. }) {
+            e.push("En «Solo desde estas IPs» no se pueden usar dominios ni países.".into());
         }
     }
     for rango in &r.externo {
@@ -239,7 +239,7 @@ pub fn usos_grupo(c: &Config, id: u64) -> Vec<String> {
 /// Familia de una dirección: Some(true)=IPv4, Some(false)=IPv6, None=las dos o cualquiera.
 fn familia(c: &Config, d: &Direccion) -> Option<bool> {
     match d {
-        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } => None,
+        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } | Direccion::Pais { .. } => None,
         Direccion::Equipo { ip, .. } => Some(ip.is_ipv4()),
         Direccion::Ip { red } => Some(red.addr().is_ipv4()),
         Direccion::Rango { desde, .. } => Some(desde.is_ipv4()),
@@ -296,6 +296,15 @@ pub fn validar_dir(c: &Config, d: &Direccion) -> Result<(), String> {
                 Ok(())
             } else {
                 Err(format!("La MAC «{}» no es válida: escríbela como aa:bb:cc:dd:ee:ff.", crate::nombre_seguro(mac)))
+            }
+        }
+        Direccion::Pais { codigos } => {
+            if codigos.is_empty() {
+                return Err("Elige al menos un país.".into());
+            }
+            match codigos.iter().find(|c| !crate::geo::es_codigo(c)) {
+                Some(c) => Err(format!("«{}» no es un código de país (dos letras, como ES).", c.chars().take(8).collect::<String>())),
+                None => Ok(()),
             }
         }
         Direccion::Dominio { nombres } => {
@@ -493,7 +502,7 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     }
     for g in &c.grupos_ip {
         for m in &g.miembros {
-            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. }) {
+            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } | Direccion::Pais { .. }) {
                 e.push(format!("El grupo «{}» solo puede tener equipos, IPs, redes o rangos.", g.nombre));
             } else if let Err(x) = validar_dir(c, m) {
                 e.push(format!("Grupo «{}»: {x}", g.nombre));
@@ -546,8 +555,8 @@ pub fn errores_nat(c: &Config, n: &ReglaNat) -> Vec<String> {
     if matches!(n.tipo, TipoNat::Dnat { .. }) && matches!(n.destino, Direccion::Interfaz { .. }) {
         e.push("En DNAT el destino no puede ser una tarjeta: elige «Cualquiera» o una IP, y la tarjeta de entrada arriba.".into());
     }
-    if [&n.origen, &n.destino].iter().any(|d| matches!(d, Direccion::Dominio { .. })) {
-        e.push("En NAT no se pueden usar dominios: usa una IP o una red.".into());
+    if [&n.origen, &n.destino].iter().any(|d| matches!(d, Direccion::Dominio { .. } | Direccion::Pais { .. })) {
+        e.push("En NAT no se pueden usar dominios ni países: usa una IP o una red.".into());
     }
     if matches!(n.destino, Direccion::Mac { .. }) {
         e.push("La MAC solo sirve como origen.".into());

@@ -588,3 +588,18 @@ async fn tabla_junta_los_tres_tipos() {
     assert_eq!(serie.len(), 2, "de serie agrupadas: {v}");
     assert!(serie.iter().all(|f| f["parejas"].as_array().is_some_and(|x| !x.is_empty())));
 }
+
+#[tokio::test]
+async fn geo_sin_base_avisa_y_lista_paises() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "GET", "/geo", None).await;
+    assert_eq!(v["estado"], "falta");
+    assert!(v["paises"].as_array().unwrap().iter().any(|x| x["codigo"] == "ES"));
+    let regla = json!({"nombre": "Fuera China", "origen_zona": "externa", "destino_zona": "gateway", "accion": "bloquear",
+        "origen": {"tipo": "pais", "codigos": ["CN"]}});
+    let (st, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    let a = v["avisos"].to_string();
+    assert!(a.contains("base de países"), "{a}");
+}

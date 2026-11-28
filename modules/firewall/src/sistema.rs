@@ -24,6 +24,14 @@ pub trait Sistema: Send + Sync {
         v
     }
 
+    /// Descarga `url` (https) en el fichero `destino`.
+    fn descargar(&self, url: &str, destino: &Path) -> Result<(), String> {
+        let mut r = ureq::get(url).call().map_err(|e| format!("No se pudo descargar {url}: {e}"))?;
+        let mut f = std::fs::File::create(destino).map_err(|e| e.to_string())?;
+        std::io::copy(&mut r.body_mut().as_reader(), &mut f).map_err(|e| format!("La descarga de {url} se cortó: {e}"))?;
+        Ok(())
+    }
+
     /// Instante UNIX actual (segundos).
     fn ahora(&self) -> u64 {
         std::time::SystemTime::now()
@@ -67,6 +75,8 @@ pub struct Falso {
     pub abiertos: Mutex<Vec<String>>,
     /// Respuestas de `resolver`.
     pub dns: Mutex<std::collections::HashMap<String, Vec<std::net::IpAddr>>>,
+    /// Ficheros que da `descargar` por URL.
+    pub descargas: Mutex<std::collections::HashMap<String, Vec<u8>>>,
 }
 
 impl Falso {
@@ -93,6 +103,9 @@ impl Falso {
     pub fn responder_dns(&self, nombre: &str, ips: &[&str]) {
         self.dns.lock().unwrap().insert(nombre.into(), ips.iter().map(|i| i.parse().unwrap()).collect());
     }
+    pub fn responder_descarga(&self, url: &str, datos: Vec<u8>) {
+        self.descargas.lock().unwrap().insert(url.into(), datos);
+    }
     pub fn limpiar(&self) {
         self.llamadas.lock().unwrap().clear();
     }
@@ -107,6 +120,10 @@ impl Sistema for Falso {
     }
     fn ahora(&self) -> u64 {
         *self.reloj.lock().unwrap()
+    }
+    fn descargar(&self, url: &str, destino: &Path) -> Result<(), String> {
+        let d = self.descargas.lock().unwrap().get(url).cloned().ok_or_else(|| format!("No se pudo descargar {url}: sin red"))?;
+        std::fs::write(destino, d).map_err(|e| e.to_string())
     }
     fn resolver(&self, nombre: &str) -> Vec<std::net::IpAddr> {
         self.dns.lock().unwrap().get(nombre).cloned().unwrap_or_default()

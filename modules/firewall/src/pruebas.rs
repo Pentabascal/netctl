@@ -26,6 +26,7 @@ pub fn fijas() -> Fijas {
         ssh: 22,
         wg: vec![("wg0".into(), 51820)],
         ips_externas: vec!["203.0.113.4".parse().unwrap()],
+        paises: Default::default(),
     }
 }
 

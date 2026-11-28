@@ -1,0 +1,9 @@
+1.0.0.0,1.0.0.255,AU
+1.0.1.0,1.0.3.255,CN
+2.136.0.0,2.136.255.255,ES
+2.137.0.0,2.139.255.255,ES
+2.140.0.0,2.140.0.255,FR
+5.0.0.0,5.0.0.0,ES
+2a01:c500::,2a01:c50f:ffff:ffff:ffff:ffff:ffff:ffff,ES
+2a01:c510::,2a01:c51f:ffff:ffff:ffff:ffff:ffff:ffff,ES
+2a02::,2a02:ff:ffff:ffff:ffff:ffff:ffff:ffff,FR

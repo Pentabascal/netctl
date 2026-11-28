@@ -83,7 +83,7 @@ fn elementos_grupo(g: &GrupoIp) -> (Vec<String>, Vec<String>) {
 }
 
 /// Variantes de la condición de dirección: (familia, texto). Vacío = no coincide con nada.
-fn dir_txt(c: &Config, d: &Direccion, lado: &str) -> Vec<(Fam, String)> {
+fn dir_txt(c: &Config, d: &Direccion, lado: &str, paises: &crate::geo::Paises) -> Vec<(Fam, String)> {
     match d {
         Direccion::Cualquiera => vec![(Fam::Ambas, String::new())],
         Direccion::Interfaz { iface } => {
@@ -93,6 +93,21 @@ fn dir_txt(c: &Config, d: &Direccion, lado: &str) -> Vec<(Fam, String)> {
         Direccion::Mac { mac } => vec![(Fam::Ambas, format!("ether {lado} {mac}"))],
         // Los conjuntos van por regla: los pone `reglas_usuario` (aquí no se sabe el id).
         Direccion::Dominio { .. } => vec![],
+        // Solo los países que ya tienen conjunto (sin base aún, la regla no sale).
+        Direccion::Pais { codigos } => {
+            let mut v = vec![];
+            for cc in codigos {
+                let Some((v4, v6)) = paises.get(cc) else { continue };
+                let n = cc.to_lowercase();
+                if !v4.is_empty() {
+                    v.push((Fam::V4, format!("ip {lado} @pais_{n}_4")));
+                }
+                if !v6.is_empty() {
+                    v.push((Fam::V6, format!("ip6 {lado} @pais_{n}_6")));
+                }
+            }
+            v
+        }
         Direccion::Grupo { id } => {
             let Some(g) = c.grupos_ip.iter().find(|g| g.id == *id) else { return vec![] };
             let (v4, v6) = elementos_grupo(g);
@@ -199,7 +214,7 @@ pub fn avisos(c: &Config, ahora: u64) -> Vec<String> {
 }
 
 /// Reglas del usuario de una casilla: `iif`/`oif` ya resueltos.
-fn reglas_usuario(t: &mut String, c: &Config, r: &Regla, iif: &str, oif: &str, ahora: u64) {
+fn reglas_usuario(t: &mut String, c: &Config, f: &Fijas, r: &Regla, iif: &str, oif: &str, ahora: u64) {
     let (Ok(dport), Ok(sport)) = (puertos_regla(c, &r.puertos), puertos_regla(c, &r.puertos_origen)) else { return };
     let Some(tiempos) = horario_txt(&r.horario, ahora) else { return };
     let proto = proto_txt(r.protocolo, r.numero_protocolo, sport.as_deref(), dport.as_deref());
@@ -214,9 +229,9 @@ fn reglas_usuario(t: &mut String, c: &Config, r: &Regla, iif: &str, oif: &str, a
     let casa = |a: Fam, b: Fam| a == Fam::Ambas || b == Fam::Ambas || a == b;
     let destinos = match &r.destino {
         Direccion::Dominio { .. } => vec![(Fam::V4, format!("ip daddr @dom{}_4", r.id)), (Fam::V6, format!("ip6 daddr @dom{}_6", r.id))],
-        d => dir_txt(c, d, "daddr"),
+        d => dir_txt(c, d, "daddr", &f.paises),
     };
-    for (fo, o) in dir_txt(c, &r.origen, "saddr") {
+    for (fo, o) in dir_txt(c, &r.origen, "saddr", &f.paises) {
         for (fd, d) in destinos.iter().cloned() {
             if !casa(fo, fd) || !casa(fo, fam) || !casa(fd, fam) {
                 continue;
@@ -253,6 +268,16 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         }
         if !v6.is_empty() {
             let _ = writeln!(t, "\tset gi{}_6 {{ type ipv6_addr; flags interval; elements = {{ {} }} }}", g.id, v6.join(", "));
+        }
+    }
+    // Conjuntos por país (solo los usados y con base)
+    for (cc, (v4, v6)) in &f.paises {
+        let n = cc.to_lowercase();
+        if !v4.is_empty() {
+            let _ = writeln!(t, "\tset pais_{n}_4 {{ type ipv4_addr; flags interval; elements = {{ {} }} }}", v4.join(", "));
+        }
+        if !v6.is_empty() {
+            let _ = writeln!(t, "\tset pais_{n}_6 {{ type ipv6_addr; flags interval; elements = {{ {} }} }}", v6.join(", "));
         }
     }
     // Conjuntos por dominio (se llenan aparte, ver `dominios::refrescar`).
@@ -309,7 +334,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     for r in reglas.iter().filter(al_gateway).filter(|r| r.corta_establecidas()) {
         let ifs = c.ifaces_de(&r.origen_zona);
         if !ifs.is_empty() {
-            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
+            reglas_usuario(&mut t, c, f, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
         }
     }
     t.push_str("\t\tct state established,related accept\n");
@@ -322,7 +347,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     for r in reglas.iter().filter(al_gateway).filter(|r| !r.corta_establecidas()) {
         let ifs = c.ifaces_de(&r.origen_zona);
         if !ifs.is_empty() {
-            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
+            reglas_usuario(&mut t, c, f, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
         }
     }
     for g in &gateway {
@@ -340,7 +365,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         for r in entre_zonas.iter().filter(|r| r.corta_establecidas() == cortan) {
             let (o, d) = (c.ifaces_de(&r.origen_zona), c.ifaces_de(&r.destino_zona));
             if !o.is_empty() && !d.is_empty() {
-                reglas_usuario(t, c, r, &format!("iifname {}", lista_ifaces(&o)), &format!("oifname {}", lista_ifaces(&d)), ahora);
+                reglas_usuario(t, c, f, r, &format!("iifname {}", lista_ifaces(&o)), &format!("oifname {}", lista_ifaces(&d)), ahora);
             }
         }
     };
@@ -362,7 +387,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         for r in desde_gateway.iter().filter(|r| r.corta_establecidas() == cortan) {
             let ifs = c.ifaces_de(&r.destino_zona);
             if !ifs.is_empty() {
-                reglas_usuario(t, c, r, "", &format!("oifname {}", lista_ifaces(&ifs)), ahora);
+                reglas_usuario(t, c, f, r, "", &format!("oifname {}", lista_ifaces(&ifs)), ahora);
             }
         }
     };
@@ -528,8 +553,9 @@ fn nat_propio(c: &Config) -> (String, String) {
             (Fam::V4, Some(v4)) => v4,
             (Fam::V6, Some(v4)) => !v4,
         };
-        for (fo, o) in dir_txt(c, &n.origen, "saddr") {
-            for (fd, d) in dir_txt(c, &n.destino, "daddr") {
+        let sin = crate::geo::Paises::new();
+        for (fo, o) in dir_txt(c, &n.origen, "saddr", &sin) {
+            for (fd, d) in dir_txt(c, &n.destino, "daddr", &sin) {
                 let junta = fo == Fam::Ambas || fd == Fam::Ambas || fo == fd;
                 if !junta || !compatible(fo) || !compatible(fd) {
                     continue;

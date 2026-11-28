@@ -119,6 +119,8 @@ pub enum Direccion {
     Mac { mac: String },
     /// Nombres de dominio (solo como destino de una regla): IPs que da el DNS.
     Dominio { nombres: Vec<String> },
+    /// Países (ISO 3166 alfa-2 en mayúsculas) según la base de DB-IP.
+    Pais { codigos: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -373,6 +375,9 @@ pub struct Fijas {
     /// IPv4 de las interfaces de la zona Externa (para el NAT loopback y «cómo conectarse»).
     #[serde(default)]
     pub ips_externas: Vec<Ipv4Addr>,
+    /// Rangos de los países que usan las reglas (vacío mientras no hay base).
+    #[serde(default)]
+    pub paises: crate::geo::Paises,
 }
 
 /// Interfaz de red tal como la ve el sistema.
