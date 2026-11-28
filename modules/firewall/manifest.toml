@@ -1,6 +1,6 @@
 id = "firewall"
 nombre = "Firewall"
-version = "0.3.0"
+version = "0.4.0"
 nucleo_minimo = "0.3.0"
 icono = "escudo"
 arranque_temprano = true

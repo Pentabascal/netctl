@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deRegla, aRegla, opcionesOrigen, opcionesDestino, textoHorario, nuevaRegla } from './politica.js';
+import { deRegla, aRegla, opcionesOrigen, opcionesDestino, textoHorario, nuevaRegla, esDominio, bandera } from './politica.js';
 
 const base = {
   id: 7, nombre: 'Cámaras', origen_zona: 'interna', destino_zona: 'externa', accion: 'bloquear',
@@ -53,4 +53,35 @@ test('textoHorario', () => {
   assert.equal(textoHorario({ tipo: 'semanal', valor: { dias: [0, 4], franja: { desde: '08:00', hasta: '17:00' } } }), 'L, V 08:00–17:00');
   assert.equal(textoHorario({ tipo: 'diario', valor: { desde: '22:00', hasta: '06:00' } }), 'Cada día 22:00–06:00');
   assert.equal(textoHorario({ tipo: 'a_medida', valor: [{ dias: [5, 6], franja: { desde: '10:00', hasta: '12:00' } }, { dias: [2], franja: { desde: '18:00', hasta: '19:00' } }] }), 'S, D 10:00–12:00 · X 18:00–19:00');
+});
+
+test('ida y vuelta con dominio, país y app', () => {
+  const ejemplos = [
+    { ...base, destino: { tipo: 'dominio', nombres: ['tiktok.com', 'www.tiktok.com'] } },
+    { ...base, origen_zona: 'externa', destino_zona: 'gateway', origen: { tipo: 'pais', codigos: ['CN', 'RU'] } },
+    { ...base, destino: { tipo: 'app', apps: [126, 7], nombres: ['YouTube', 'HTTP'] } },
+  ];
+  for (const r of ejemplos) assert.deepEqual(aRegla(deRegla(r)), r);
+  const f = deRegla(ejemplos[0]);
+  f.destino.dominios = [' TikTok.com ', ''];
+  assert.deepEqual(aRegla(f).destino, { tipo: 'dominio', nombres: ['tiktok.com'] });
+  assert.ok(esDominio('a-b.example.org') && !esDominio('-a.com') && !esDominio('mal_dominio.com') && !esDominio(''));
+  assert.equal(bandera('es'), '🇪🇸');
+});
+
+test('app desactivada con motivo', () => {
+  const motivo = 'No está instalada la librería nDPI (paquete libndpi).';
+  const app = opcionesDestino([], { externa: true, apps: { disponible: false, motivo } }).find((o) => o.valor === 'app');
+  assert.equal(app.desactivado, true);
+  assert.equal(app.ayuda, motivo);
+  const ok = opcionesDestino([], { externa: true, apps: { disponible: true, apps: [] } }).find((o) => o.valor === 'app');
+  assert.ok(!ok.desactivado);
+});
+
+test('solo hacia externa', () => {
+  const v = (o) => o.map((x) => x.valor);
+  assert.deepEqual(v(opcionesDestino(['eth1'])), ['cualquiera', 'ip', 'red']);
+  assert.deepEqual(v(opcionesDestino([], { externa: true })), ['cualquiera', 'ip', 'dominio', 'pais', 'app']);
+  assert.ok(!v(opcionesOrigen([])).includes('pais'));
+  assert.ok(v(opcionesOrigen([], { externa: true })).includes('pais'));
 });

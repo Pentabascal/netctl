@@ -7,6 +7,9 @@
   import { aplicado, textoError, redesDe } from './estado.svelte.js';
   import { deRegla, aRegla, nuevaRegla, opcionesOrigen, opcionesDestino, DIAS } from './politica.js';
   import { ordenarZonas } from './listaPoliticas.js';
+  import ElegirDominios from './ElegirDominios.svelte';
+  import ElegirPais from './ElegirPais.svelte';
+  import ElegirApp from './ElegirApp.svelte';
   import { tiposDisponibles } from './tabla.js';
 
   /** regla: null = nueva (en la pareja origen→destino). */
@@ -23,6 +26,25 @@
   let validos = $state({ po: true, pd: true, num: true });
   let ocupado = $state(false);
   let error = $state('');
+
+  // Países y apps: se piden una vez al abrir el panel.
+  let geo = $state(null);
+  let apps = $state(null);
+  $effect(() => {
+    untrack(() => {
+      api.get('/geo').then((x) => (geo = x)).catch(() => {});
+      api.get('/apps').then((x) => (apps = x)).catch(() => (apps = { disponible: false, motivo: 'No se pudo preguntar por las apps.' }));
+    });
+  });
+  const esExterna = (z) => c.zonas.find((x) => x.id === z)?.tipo === 'externa';
+  const EXTRA = ['dominio', 'pais', 'app'];
+  // Dominio, País y App solo hacia (o desde, el país) Externa.
+  $effect(() => {
+    if (EXTRA.includes(f.destino.tipo) && !esExterna(f.destinoZona)) untrack(() => (f.destino = { ...f.destino, tipo: 'cualquiera' }));
+  });
+  $effect(() => {
+    if (f.origen.tipo === 'pais' && !esExterna(f.origenZona)) untrack(() => (f.origen = { ...f.origen, tipo: 'cualquiera' }));
+  });
 
   const usaPuertos = $derived(['tcp', 'udp', 'tcp_udp'].includes(f.protocolo));
 
@@ -55,6 +77,10 @@
     if (f.destino.tipo === 'ip' && !f.destino.dir) l.push('Elige el equipo o escribe la IP de destino.');
     if (f.origen.tipo === 'red' && !f.origen.red) l.push('Elige la tarjeta de origen.');
     if (f.destino.tipo === 'red' && !f.destino.red) l.push('Elige la tarjeta de destino.');
+    if (f.destino.tipo === 'dominio' && !f.destino.dominios.length) l.push('Escribe al menos un dominio.');
+    if (f.destino.tipo === 'pais' && !f.destino.paises.length) l.push('Elige al menos un país de destino.');
+    if (f.origen.tipo === 'pais' && !f.origen.paises.length) l.push('Elige al menos un país de origen.');
+    if (f.destino.tipo === 'app' && !f.destino.apps.length) l.push('Elige al menos una app.');
     if (usaPuertos && ((f.puertoOrigen.modo === 'concreto' && !validos.po) || (f.puertoDestino.modo === 'concreto' && !validos.pd))) l.push('Revisa los puertos.');
     if (f.protocolo === 'otro' && !validos.num) l.push('Revisa el número de protocolo.');
     if (f.estado === 'elegir' && !f.estados.length) l.push('Elige al menos un estado de conexión.');
@@ -146,13 +172,15 @@
 
   <Bloque titulo="Zona de origen" ayuda="De dónde sale el tráfico. Después puedes afinar a un equipo, una tarjeta, una IP o una MAC de esa zona.">
     <Campo tipo="select" bind:valor={f.origenZona} opciones={zonaOpciones} />
-    <Radios bind:valor={f.origen.tipo} opciones={opcionesOrigen(tarjetasDe(f.origenZona))} />
+    <Radios bind:valor={f.origen.tipo} opciones={opcionesOrigen(tarjetasDe(f.origenZona), { externa: esExterna(f.origenZona) })} />
     {#if f.origen.tipo === 'equipo'}
       <SelectorEquipo bind:valor={f.origen.dir} propias={redes.propias} conocidas={redes.conocidas} placeholder="Busca un equipo por nombre, IP o MAC" />
     {:else if f.origen.tipo === 'ip'}
       <SelectorEquipo bind:valor={f.origen.dir} redes grupos={gruposIp} redesLista={redes.lista} conocidas={redes.conocidas} placeholder="IP, red (192.168.1.0/24), rango o grupo" />
     {:else if f.origen.tipo === 'red'}
       <Radios bind:valor={f.origen.red} opciones={tarjetasDe(f.origenZona).map((t) => ({ valor: t, texto: t }))} />
+    {:else if f.origen.tipo === 'pais'}
+      <ElegirPais {geo} bind:valor={f.origen.paises} />
     {:else if f.origen.tipo === 'mac'}
       <Campo bind:valor={f.origen.mac} mono placeholder="aa:bb:cc:dd:ee:ff" error={f.origen.mac && !macValida(f.origen.mac) ? 'Escríbela como aa:bb:cc:dd:ee:ff' : ''} />
     {/if}
@@ -172,9 +200,15 @@
 
   <Bloque titulo="Zona de destino" ayuda="A dónde va el tráfico.">
     <Campo tipo="select" bind:valor={f.destinoZona} opciones={zonaOpciones} />
-    <Radios bind:valor={f.destino.tipo} opciones={opcionesDestino(tarjetasDe(f.destinoZona))} />
+    <Radios bind:valor={f.destino.tipo} opciones={opcionesDestino(tarjetasDe(f.destinoZona), { externa: esExterna(f.destinoZona), apps })} />
     {#if f.destino.tipo === 'ip'}
       <SelectorEquipo bind:valor={f.destino.dir} redes grupos={gruposIp} redesLista={redes.lista} conocidas={redes.conocidas} placeholder="Equipo, IP, red, rango o grupo" />
+    {:else if f.destino.tipo === 'dominio'}
+      <ElegirDominios bind:valor={f.destino.dominios} />
+    {:else if f.destino.tipo === 'pais'}
+      <ElegirPais {geo} bind:valor={f.destino.paises} />
+    {:else if f.destino.tipo === 'app'}
+      <ElegirApp {apps} bind:valor={f.destino.apps} />
     {:else if f.destino.tipo === 'red'}
       <Radios bind:valor={f.destino.red} opciones={tarjetasDe(f.destinoZona).map((t) => ({ valor: t, texto: t }))} />
     {/if}

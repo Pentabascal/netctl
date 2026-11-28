@@ -46,8 +46,11 @@ export function aPuertos(p) {
 
 export function deDir(d, lado) {
   const t = d?.tipo ?? 'cualquiera';
-  const vacio = { tipo: 'cualquiera', dir: null, red: '', mac: '' };
+  const vacio = { tipo: 'cualquiera', dir: null, red: '', mac: '', dominios: [], paises: [], apps: [] };
   if (t === 'cualquiera') return vacio;
+  if (t === 'dominio') return { ...vacio, tipo: 'dominio', dominios: [...d.nombres] };
+  if (t === 'pais') return { ...vacio, tipo: 'pais', paises: [...d.codigos] };
+  if (t === 'app') return { ...vacio, tipo: 'app', apps: d.apps.map((id, i) => ({ id, nombre: d.nombres?.[i] ?? `App ${id}` })) };
   if (t === 'interfaz') return { ...vacio, tipo: 'red', red: d.iface };
   if (t === 'mac') return { ...vacio, tipo: 'mac', mac: d.mac };
   if (t === 'equipo' && lado === 'origen') return { ...vacio, tipo: 'equipo', dir: d };
@@ -55,6 +58,9 @@ export function deDir(d, lado) {
 }
 
 export function aDir(x) {
+  if (x.tipo === 'dominio') return { tipo: 'dominio', nombres: x.dominios.map((n) => n.trim().toLowerCase()).filter(Boolean) };
+  if (x.tipo === 'pais') return { tipo: 'pais', codigos: [...x.paises] };
+  if (x.tipo === 'app') return { tipo: 'app', apps: x.apps.map((a) => a.id), nombres: x.apps.map((a) => a.nombre) };
   if (x.tipo === 'red') return { tipo: 'interfaz', iface: x.red };
   if (x.tipo === 'mac') return { tipo: 'mac', mac: x.mac.trim().toLowerCase() };
   if ((x.tipo === 'equipo' || x.tipo === 'ip') && x.dir) return x.dir;
@@ -126,24 +132,49 @@ export function aRegla(f) {
   return f.id != null ? { id: f.id, ...r } : r;
 }
 
-/** Radios del origen; «Red» solo si la zona tiene tarjetas. */
-export function opcionesOrigen(tarjetas) {
+const PAIS = { valor: 'pais', texto: 'País', ayuda: 'Todo el tráfico de las IPs de esos países (según la base libre de DB-IP, que se actualiza cada mes).' };
+
+/** Radios del origen; «Red» solo si la zona tiene tarjetas y «País» solo desde Externa. */
+export function opcionesOrigen(tarjetas, { externa = false } = {}) {
   return [
     { valor: 'cualquiera', texto: 'Cualquiera' },
     { valor: 'equipo', texto: 'Equipo', ayuda: 'Un equipo de la lista. Si cambia de IP, la regla le sigue (va por su MAC).' },
     ...(tarjetas.length ? [{ valor: 'red', texto: 'Red', ayuda: 'Todo lo que entra por una tarjeta de red de esta zona.' }] : []),
     { valor: 'ip', texto: 'IP', ayuda: 'Una IP, una red (192.168.1.0/24), un rango o un grupo de IPs.' },
     { valor: 'mac', texto: 'MAC', ayuda: 'La dirección física de un equipo, por ejemplo aa:bb:cc:dd:ee:ff.' },
+    ...(externa ? [PAIS] : []),
   ];
 }
 
-/** Radios del destino (Dominio, País y App llegan en la fase 2.5c). */
-export function opcionesDestino(tarjetas) {
+/**
+ * Radios del destino. Hacia internet (zona Externa) también Dominio, País y App; App sale
+ * desactivada con el motivo si `apps` (GET /apps) dice que no se puede.
+ */
+export function opcionesDestino(tarjetas, { externa = false, apps = null } = {}) {
+  const app = { valor: 'app', texto: 'App', ayuda: 'Aplicaciones que se reconocen por su tráfico (YouTube, TikTok, Netflix…) con nDPI. Se detectan en los primeros paquetes de cada conexión.' };
+  if (apps && apps.disponible === false) {
+    app.desactivado = true;
+    app.ayuda = apps.motivo;
+  }
   return [
     { valor: 'cualquiera', texto: 'Cualquiera' },
     { valor: 'ip', texto: 'IP', ayuda: 'Un equipo de la lista, una IP, una red, un rango o un grupo de IPs.' },
     ...(tarjetas.length ? [{ valor: 'red', texto: 'Red', ayuda: 'Todo lo que sale por una tarjeta de red de esta zona.' }] : []),
+    ...(externa
+      ? [{ valor: 'dominio', texto: 'Dominio', ayuda: 'Nombres como tiktok.com. Se preguntan al DNS cada 5 minutos y se bloquean las IPs que da.' }, PAIS, app]
+      : []),
   ];
+}
+
+/** ¿Es un nombre de dominio válido? (como el servidor: etiquetas de 1 a 63, ≤ 253) */
+export function esDominio(s) {
+  const t = (s ?? '').trim().toLowerCase();
+  return t.length > 0 && t.length <= 253 && t.split('.').every((e) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(e));
+}
+
+/** Bandera emoji de un código de país. */
+export function bandera(cc) {
+  return String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
 }
 
 const dias = (d) => [...d].sort().map((x) => DIAS_CORTOS[x]).join(', ');
