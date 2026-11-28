@@ -1,6 +1,6 @@
 # netctl — panel web modular de red estilo UniFi
 
-Fecha: 2026-11-23 · Repo: github.com/Pentabascal/netctl (público) · Estado: diseño
+Fecha: 2026-11-23 (ampliado 2026-11-27) · Repo: github.com/Pentabascal/netctl (público) · Estado: diseño
 
 ## 1. Intención
 
@@ -59,8 +59,7 @@ decisión de detalle:
   muestra en Inicio el consumo de CPU y memoria de cada módulo.
 - **Bien dividido en la interfaz:** ninguna pantalla intenta hacerlo todo. Cada
   módulo tiene pocas entradas en la barra lateral y cada página, pestañas
-  claras. Lo habitual va a la vista; lo avanzado, plegado en «Avanzado». Los
-  detalles se editan en el panel lateral, no en páginas largas.
+  claras. Los detalles se editan en el panel lateral, no en páginas largas.
 - **Fácil de configurar:** valores por defecto que funcionan sin tocar nada;
   asistentes para lo primero que hace cada módulo (primer servidor WireGuard,
   asignar interfaces a zonas, configurar WAN, activar IPS); validación en el
@@ -69,6 +68,31 @@ decisión de detalle:
 - **Bonito:** estética UniFi Network cuidada (espaciado, iconos de línea,
   tarjetas con métricas, gráficas de tráfico, estados con color) y coherente
   en todos los módulos gracias al kit compartido.
+
+### Reglas de interfaz (obligatorias, ampliación 2026-11-27)
+
+- **Lo más fácil posible, estilo UniFi, también en lo complejo:** la tarea
+  principal de cada pantalla en **3 pasos o menos**; asistente la primera vez;
+  valores recomendados ya puestos y marcados «(recomendado)».
+- **Sin modo avanzado ni secciones «Avanzado» escondidas** (el usuario lo pidió
+  y después lo quitó): todas las opciones necesarias visibles, ordenadas de la
+  más usada a la menos.
+- **Cada campo explicado:** una línea de ayuda debajo + un «?» con ejemplo y
+  valor recomendado; el término técnico va entre paréntesis
+  (p. ej. «Mantener viva la conexión (keepalive)»).
+- Cada fase lleva una **lista de comprobación de opciones** en su plan, para no
+  dejarse ninguna opción necesaria.
+- **Nunca hace falta editar ficheros a mano.** Cada módulo enseña en solo
+  lectura la configuración que genera y un registro de lo que aplica.
+- **Castellano llano.** Los errores dicen cómo arreglarlo, con botón directo
+  cuando se puede. No se muestra lo que no aplica a la máquina.
+- **Selector de equipos común** (§7.6) en todo campo que pida un equipo, IP o
+  red.
+- **Campos numéricos como texto con comprobador** (solo dígitos y dentro de
+  rango), no `<input type=number>`.
+- **Revisión visual antes de cerrar cada fase:** recorrido de la interfaz con
+  capturas en pantalla virtual (Xvfb :99 + xdotool + `import`), nunca abriendo
+  ventanas en el escritorio del usuario.
 
 ## 4. Anti-objetivos (fallo aunque «funcione»)
 
@@ -220,6 +244,12 @@ netctl/
   `/api/m/<id>/`.
 - Página **Inicio**: tarjetas `/resumen` de cada módulo. Página **Módulos**:
   catálogo, instalados, botones instalar/actualizar/quitar.
+- **Selector de equipos** (componente del kit, lo usan todos los módulos):
+  desplegable con buscador como en UniFi (nombre, IP, MAC, fabricante, estado)
+  y, en el mismo campo, se puede escribir a mano una IP, una red CIDR o un
+  rango. Si se elige un equipo, la regla queda **vinculada a su MAC**: si el
+  equipo cambia de IP, las reglas que lo usan se regeneran solas. La lista sale
+  de Equipos (§7.7).
 
 ```
 ┌────┬──────────────────────────────────────────────────────┐
@@ -232,6 +262,38 @@ netctl/
 │    │ movil     10.8.0.3   ○ Descon.  hace 3 h      40 MB  │
 └────┴──────────────────────────────────────────────────────┘
 ```
+
+### 7.7 Equipos y Topología (núcleo, fase 2c)
+
+- **Una sola lista** de equipos: conectados y nuevos juntos, con estado
+  conectado / desconectado / desactivado y **fecha de unión** (primera vez
+  visto). **Nada se borra solo**; se borra a mano. Nombre, icono y notas
+  editables.
+- Fuentes: tabla ARP/vecinos, concesiones del módulo DHCP y **clientes VPN**
+  (incluidos). Cada módulo aporta los suyos con `GET /equipos`.
+- **Topología:** mapa en árbol (servidor → switches/AP → equipos). Switches y
+  AP por LLDP/CDP y SNMP; API de UniFi **solo si hay controlador** (no consta
+  que el usuario tenga uno); colocación manual siempre posible.
+- Alimenta el selector de equipos (§7.6).
+
+### 7.8 Directorio AD/LDAP (núcleo, fase 2d)
+
+- **Unión real a Active Directory** con adcli + sssd. Por defecto **no** se
+  abre SSH a los usuarios del dominio (opción aparte).
+- **OpenLDAP**, solo con conexión cifrada (LDAPS o StartTLS).
+- Un grupo del directorio = administradores del panel. Se conserva una
+  **cuenta local de emergencia**.
+- Grupos → permisos de la VPN; dar de baja a un usuario en el directorio
+  desactiva sus dispositivos VPN.
+- Grupos dinámicos en el Firewall (reglas por grupo de usuarios).
+
+### 7.9 BPA — analizador de buenas prácticas (núcleo, fase 2e)
+
+- Cada módulo aporta `GET /bpa` (comprobaciones) y
+  `POST /bpa/arreglar/<id>`.
+- Gravedades (crítico / aviso / info), «por qué importa» y «cómo arreglarlo»,
+  botones **Arreglar** e **Ignorar**, historial e informe exportable.
+- A partir de la fase 2e, cada fase trae sus propias comprobaciones.
 
 ## 8. Módulo WireGuard (fase 1)
 
@@ -256,6 +318,19 @@ netctl/
   borrar.
 - Ajustes del servidor en una pestaña aparte.
 
+## 8b. netctl VPN de configuración cero (fase 2b; nombre provisional)
+
+- Dentro del módulo WireGuard, al estilo de UniFi Teleport.
+- **Invitaciones** por enlace, QR o código: de un solo uso y con caducidad.
+- La **clave privada se genera en el dispositivo**; el servidor nunca la ve.
+- **Servicio de inscripción separado del panel** (el panel no se expone para
+  inscribir dispositivos).
+- Varias direcciones del servidor (multi-WAN y alta disponibilidad): el
+  cliente prueba en orden.
+- **Relé opcional** `netctl-rele` (UDP y TCP/443) para redes que bloquean UDP.
+- Apps en orden **Linux → Windows → Android**, con un núcleo Rust compartido
+  (`crates/netctl-vpn-cliente`, con uniffi en Android).
+
 ## 9. Módulo Firewall (fase 2)
 
 - Tabla propia `inet netctl` en nftables; carga atómica con `nft -f`; se
@@ -279,7 +354,18 @@ netctl/
   solo. El puerto del panel y SSH desde la zona Interna están siempre
   permitidos (regla fija, visible pero no borrable).
 - Al instalarse: avisa, guarda el ruleset actual y desactiva `ufw`/`firewalld`.
-  Al desinstalarse: ofrece restaurar lo guardado.
+  Al desinstalarse: ofrece restaurar lo guardado. Al instalarse, el módulo
+  WireGuard deja de poner su NAT (lo pone el Firewall).
+- **Reenvío de puertos** (DNAT), ampliación 2026-11-27:
+  - **Asistente de 3 pasos:** (1) equipo de destino con el selector de equipos;
+    (2) servicio, con plantillas (web, SSH, RDP, juegos, cámaras…) o puerto a
+    mano; (3) desde dónde se permite (cualquiera / IPs o países concretos) y
+    **caducidad opcional**.
+  - **Lista agrupada por equipo** con estado, contadores de uso y
+    activar/desactivar.
+  - **Avisos** de choques (mismo puerto externo ya usado, choca con el panel o
+    con WireGuard) y de servicios delicados expuestos a internet (RDP, SMB,
+    bases de datos, SSH).
 
 ## 9b. Decisiones tras la revisión (decisiones de Claude)
 
@@ -307,9 +393,9 @@ netctl/
   instalación se bloquea.
 - **Firma:** se verifica con el crate `minisign-verify`. Rotar o revocar la
   clave queda fuera de la v1.
-- **Primer acceso:** `install.sh` / el postinstall genera una contraseña de
-  administrador aleatoria y la muestra una vez. Se puede cambiar con
-  `netctl-core admin set-password`.
+- **Primer acceso (así quedó en el núcleo 0.1.3):** contraseña de fábrica
+  «root», con un aviso en el panel hasta que se cambie. Se puede cambiar
+  desde Ajustes o con `netctl-core admin set-password`.
 
 ## 9c. Módulo Router (fase 3)
 
@@ -324,12 +410,12 @@ Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
 - **Tabla de rutas** en vivo y **rutas estáticas**.
 - **Rutas por política** (origen, destino, puerto → conexión o VPN) con tablas
   de rutas + marcas de nftables.
-- **Multi-WAN:** conmutación por caída (sondeo de salud por WAN) o reparto de
-  carga.
+- **Varias WAN:** respaldo por prioridad, balanceo por conexión con pesos, o
+  mixto; comprobación de salud por WAN.
 - **Enrutamiento dinámico** OSPF, BGP y RIP con FRR: vecinos, estado de
   sesiones, rutas aprendidas. Pestaña propia, plegada por defecto.
-- **QoS:** límites de ancho de banda por red/dispositivo y control de latencia
-  (CAKE / fq_codel con `tc`).
+- **QoS** con CAKE: límites de ancho de banda por red/dispositivo y control de
+  latencia.
 - NAT y reenvío de puertos siguen en el Firewall.
 - Cambios de red con el «aplicar con confirmación» de 60 s.
 
@@ -346,16 +432,42 @@ Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
   solas (sets de nftables).
 - Mostrar el impacto en CPU y avisar si la máquina no da para el tráfico.
 
+## 9e. Módulo DHCP (fase 3b)
+
+- dnsmasq **solo DHCP**, en una instancia propia (no toca otro dnsmasq).
+- Configuración por red estilo UniFi OS (rango, puerta de enlace, DNS,
+  duración de la concesión), **IPs fijas**, clientes en vivo con botón
+  «Fijar IP», relé DHCP y **detección de servidores DHCP intrusos**.
+- No depende del módulo Router.
+
+## 9f. Módulo Alta disponibilidad / shadow mode (fase 5)
+
+- Pareja **activo + en espera**. keepalived (VRRP) con IP virtual y
+  conntrackd (las conexiones sobreviven al cambio).
+- Sincronización de toda la configuración de netctl y de las concesiones DHCP.
+- Emparejado por código, protección contra cerebro dividido y actualizaciones
+  sin cortes (se actualiza primero el de reserva).
+
 ## 10. Fases
 
-1. **Fase 1:** workspace, `wg-modelo` extraído, núcleo (login, carcasa, kit,
-   gestor de módulos, catálogo firmado), herramientas de publicación, módulo
-   WireGuard completo.
-2. **Fase 2:** módulo Firewall.
-3. **Fase 3:** módulo Router.
-4. **Fase 4:** módulo Seguridad.
+Módulos instalables: WireGuard, Firewall, Router, DHCP, Seguridad y Alta
+disponibilidad. Funciones del núcleo (no son módulos): Equipos/Topología,
+Directorio, BPA y selector de equipos.
 
-Cada fase tiene su propio plan; las fases 3 y 4 se detallan al llegar a ellas.
+| Fase | Qué |
+|---|---|
+| 1 | Workspace, `wg-modelo`, núcleo, publicación y módulo WireGuard (**hecha**, núcleo y WireGuard 0.1.3) |
+| 2 | Firewall con reenvío de puertos (§9, §9b) |
+| 2b | netctl VPN de configuración cero (§8b) |
+| 2c | Equipos y Topología (§7.7) |
+| 2d | Directorio AD/LDAP (§7.8) |
+| 2e | BPA (§7.9) |
+| 3 | Router (§9c) |
+| 3b | DHCP (§9e) |
+| 4 | Seguridad (§9d) |
+| 5 | Alta disponibilidad (§9f) |
+
+Cada fase tiene su propio plan, con su lista de comprobación de opciones.
 
 Las pruebas reales en Debian, openSUSE y Rocky las hace **el usuario**. Quien
 lo construya entrega tests automáticos (unitarios: generación de reglas
