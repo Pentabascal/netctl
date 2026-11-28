@@ -47,6 +47,8 @@ struct Vivo {
 }
 
 pub struct Estado {
+    /// IPs vistas de los destinos por dominio.
+    dominios: Arc<std::sync::Mutex<crate::dominios::Cache>>,
     pub rutas: Rutas,
     sistema: Arc<dyn Sistema>,
     ap: Aplicador,
@@ -84,6 +86,7 @@ impl Estado {
             cerrojo: tokio::sync::Mutex::new(()),
             vivo: Default::default(),
             ultimas_fijas: Default::default(),
+            dominios: Default::default(),
         }))
     }
 
@@ -146,6 +149,16 @@ impl Estado {
                     }
                 }
             }
+        }
+        // Destinos por dominio: preguntar al DNS cada 5 min y volver a llenar los conjuntos (una
+        // recarga de la tabla, o el «deshacer» de los 60 s, los deja vacíos).
+        if let Ok(Some(c)) = self.actual() {
+            let (s2, yo) = (s.clone(), self.dominios.clone());
+            let _ = tokio::task::spawn_blocking(move || {
+                let mut cache = yo.lock().unwrap();
+                crate::dominios::refrescar(&c, &*s2, &mut cache);
+            })
+            .await;
         }
         // Contadores
         if let Ok(j) = s.ejecutar("nft", &["-j", "list", "table", "inet", "netctl"], None) {
@@ -232,6 +245,7 @@ impl Estado {
             .map_err(|e| Fallo::errores(vec![e]))?
             .expect("con confirmación siempre hay espera");
         *self.ultimas_fijas.lock().unwrap() = Some(fijas);
+        crate::dominios::rellenar(nueva, &*self.sistema, &mut self.dominios.lock().unwrap());
         Ok(e)
     }
 
@@ -601,7 +615,7 @@ async fn ver_config(State(e): E) -> R {
                 "pendiente": e.pendiente_json(),
                 "una_interfaz": c.una_interfaz(),
                 "ips_externas": ips_wan_json(&e.ips_wan(&c)),
-                "avisos": nft::avisos(&c, e.sistema.ahora()),
+                "avisos": nft::avisos(&c, e.sistema.ahora()).into_iter().chain(e.dominios.lock().unwrap().avisos.clone()).collect::<Vec<_>>(),
                 "tarjetas_de_zona": c.zonas.iter().map(|z| (z.id.clone(), c.ifaces_de(&z.id))).collect::<std::collections::BTreeMap<_, _>>(),
             }))
             .into_response()
@@ -702,6 +716,7 @@ fn texto_dir(c: &Config, d: &Direccion) -> String {
         }
         Direccion::Interfaz { iface } => format!("Tarjeta {iface}"),
         Direccion::Mac { mac } => format!("MAC {mac}"),
+        Direccion::Dominio { nombres } => nombres.join(", "),
     }
 }
 

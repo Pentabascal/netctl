@@ -15,6 +15,15 @@ pub trait Sistema: Send + Sync {
         std::net::TcpStream::connect_timeout(&(ip, puerto).into(), std::time::Duration::from_secs(2)).is_ok()
     }
 
+    /// IPs de un nombre según el DNS del sistema (vacío si no resuelve).
+    fn resolver(&self, nombre: &str) -> Vec<std::net::IpAddr> {
+        use std::net::ToSocketAddrs;
+        let mut v: Vec<std::net::IpAddr> = (nombre, 0).to_socket_addrs().map(|a| a.map(|x| x.ip()).collect()).unwrap_or_default();
+        v.sort();
+        v.dedup();
+        v
+    }
+
     /// Instante UNIX actual (segundos).
     fn ahora(&self) -> u64 {
         std::time::SystemTime::now()
@@ -56,6 +65,8 @@ pub struct Falso {
     pub reloj: Mutex<u64>,
     /// Puertos (ip:puerto) que responden a `conectar`.
     pub abiertos: Mutex<Vec<String>>,
+    /// Respuestas de `resolver`.
+    pub dns: Mutex<std::collections::HashMap<String, Vec<std::net::IpAddr>>>,
 }
 
 impl Falso {
@@ -79,6 +90,9 @@ impl Falso {
             .filter_map(|(_, e)| e.clone())
             .collect()
     }
+    pub fn responder_dns(&self, nombre: &str, ips: &[&str]) {
+        self.dns.lock().unwrap().insert(nombre.into(), ips.iter().map(|i| i.parse().unwrap()).collect());
+    }
     pub fn limpiar(&self) {
         self.llamadas.lock().unwrap().clear();
     }
@@ -93,6 +107,9 @@ impl Sistema for Falso {
     }
     fn ahora(&self) -> u64 {
         *self.reloj.lock().unwrap()
+    }
+    fn resolver(&self, nombre: &str) -> Vec<std::net::IpAddr> {
+        self.dns.lock().unwrap().get(nombre).cloned().unwrap_or_default()
     }
     fn conectar(&self, ip: std::net::IpAddr, puerto: u16) -> bool {
         self.abiertos.lock().unwrap().contains(&format!("{ip}:{puerto}"))

@@ -117,6 +117,8 @@ pub enum Direccion {
     Interfaz { iface: String },
     /// Solo como origen.
     Mac { mac: String },
+    /// Nombres de dominio (solo como destino de una regla): IPs que da el DNS.
+    Dominio { nombres: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

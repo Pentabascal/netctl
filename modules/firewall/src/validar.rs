@@ -110,6 +110,9 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
         if let Err(x) = validar_dir(c, d) {
             e.push(x);
         }
+        if matches!(d, Direccion::Dominio { .. }) {
+            e.push("En «Solo desde estas IPs» no se pueden usar dominios.".into());
+        }
     }
     for rango in &r.externo {
         for (pr, p, nombre) in puertos_reservados(f) {
@@ -236,7 +239,7 @@ pub fn usos_grupo(c: &Config, id: u64) -> Vec<String> {
 /// Familia de una dirección: Some(true)=IPv4, Some(false)=IPv6, None=las dos o cualquiera.
 fn familia(c: &Config, d: &Direccion) -> Option<bool> {
     match d {
-        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } => None,
+        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } => None,
         Direccion::Equipo { ip, .. } => Some(ip.is_ipv4()),
         Direccion::Ip { red } => Some(red.addr().is_ipv4()),
         Direccion::Rango { desde, .. } => Some(desde.is_ipv4()),
@@ -295,7 +298,30 @@ pub fn validar_dir(c: &Config, d: &Direccion) -> Result<(), String> {
                 Err(format!("La MAC «{}» no es válida: escríbela como aa:bb:cc:dd:ee:ff.", crate::nombre_seguro(mac)))
             }
         }
+        Direccion::Dominio { nombres } => {
+            if nombres.is_empty() {
+                return Err("Escribe al menos un dominio.".into());
+            }
+            match nombres.iter().find(|n| !es_dominio(n)) {
+                Some(n) => Err(format!("El dominio «{}» no es válido.", n.chars().take(80).collect::<String>())),
+                None => Ok(()),
+            }
+        }
     }
+}
+
+/// Nombre de dominio según RFC 1123: etiquetas de 1 a 63 letras, números o guiones (sin guion al
+/// principio ni al final), 253 caracteres como mucho.
+pub fn es_dominio(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 253
+        && s.split('.').all(|e| {
+            !e.is_empty()
+                && e.len() <= 63
+                && !e.starts_with('-')
+                && !e.ends_with('-')
+                && e.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
 }
 
 /// Hora `HH:MM` de 00:00 a 23:59.
@@ -455,6 +481,9 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
                 e.push(format!("Regla «{n}»: {x}"));
             }
         }
+        if matches!(r.origen, Direccion::Dominio { .. }) {
+            e.push(format!("Regla «{n}»: el dominio solo sirve como destino."));
+        }
         e.extend(errores_regla_25(c, r));
         if let (Some(a), Some(b)) = (familia(c, &r.origen), familia(c, &r.destino))
             && a != b
@@ -464,7 +493,7 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     }
     for g in &c.grupos_ip {
         for m in &g.miembros {
-            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. }) {
+            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. }) {
                 e.push(format!("El grupo «{}» solo puede tener equipos, IPs, redes o rangos.", g.nombre));
             } else if let Err(x) = validar_dir(c, m) {
                 e.push(format!("Grupo «{}»: {x}", g.nombre));
@@ -516,6 +545,9 @@ pub fn errores_nat(c: &Config, n: &ReglaNat) -> Vec<String> {
     }
     if matches!(n.tipo, TipoNat::Dnat { .. }) && matches!(n.destino, Direccion::Interfaz { .. }) {
         e.push("En DNAT el destino no puede ser una tarjeta: elige «Cualquiera» o una IP, y la tarjeta de entrada arriba.".into());
+    }
+    if [&n.origen, &n.destino].iter().any(|d| matches!(d, Direccion::Dominio { .. })) {
+        e.push("En NAT no se pueden usar dominios: usa una IP o una red.".into());
     }
     if matches!(n.destino, Direccion::Mac { .. }) {
         e.push("La MAC solo sirve como origen.".into());
@@ -920,5 +952,22 @@ mod tests {
         c.nat_propio.push(n);
         let e = choques_reenvio(&c, &fijas(), &reenvio(9, "192.168.1.20", 25565));
         assert!(e.iter().any(|x| x.contains("la regla NAT «nat 10»")), "{e:?}");
+    }
+
+    #[test]
+    fn dominio_invalido() {
+        let mut c = router();
+        let mut r = regla(30, "interna", "externa", Accion::Bloquear);
+        r.destino = Direccion::Dominio { nombres: vec!["bien.com".into(), "mal_dominio..com".into()] };
+        c.reglas.push(r.clone());
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("El dominio «mal_dominio..com» no es válido.")), "{e:?}");
+        assert!(!e.iter().any(|x| x.contains("«bien.com»")), "{e:?}");
+        c.reglas[0].destino = Direccion::Dominio { nombres: vec![] };
+        assert!(!validar(&c, &fijas()).is_empty());
+        c.reglas[0].destino = Direccion::Cualquiera;
+        c.reglas[0].origen = Direccion::Dominio { nombres: vec!["bien.com".into()] };
+        assert!(validar(&c, &fijas()).iter().any(|x| x.contains("solo sirve como destino")));
+        assert!(es_dominio("a-b.example.org") && !es_dominio("-a.com") && !es_dominio(&"a".repeat(64)) && !es_dominio(""));
     }
 }

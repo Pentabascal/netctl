@@ -91,6 +91,8 @@ fn dir_txt(c: &Config, d: &Direccion, lado: &str) -> Vec<(Fam, String)> {
             vec![(Fam::Ambas, format!("{k} \"{iface}\""))]
         }
         Direccion::Mac { mac } => vec![(Fam::Ambas, format!("ether {lado} {mac}"))],
+        // Los conjuntos van por regla: los pone `reglas_usuario` (aquí no se sabe el id).
+        Direccion::Dominio { .. } => vec![],
         Direccion::Grupo { id } => {
             let Some(g) = c.grupos_ip.iter().find(|g| g.id == *id) else { return vec![] };
             let (v4, v6) = elementos_grupo(g);
@@ -210,8 +212,12 @@ fn reglas_usuario(t: &mut String, c: &Config, r: &Regla, iif: &str, oif: &str, a
     let log = if r.log { format!("log prefix \"netctl r{} \"", r.id) } else { String::new() };
     let comentario = format!("comment \"r{}_{}\"", r.id, nombre_seguro(&r.nombre));
     let casa = |a: Fam, b: Fam| a == Fam::Ambas || b == Fam::Ambas || a == b;
+    let destinos = match &r.destino {
+        Direccion::Dominio { .. } => vec![(Fam::V4, format!("ip daddr @dom{}_4", r.id)), (Fam::V6, format!("ip6 daddr @dom{}_6", r.id))],
+        d => dir_txt(c, d, "daddr"),
+    };
     for (fo, o) in dir_txt(c, &r.origen, "saddr") {
-        for (fd, d) in dir_txt(c, &r.destino, "daddr") {
+        for (fd, d) in destinos.iter().cloned() {
             if !casa(fo, fd) || !casa(fo, fam) || !casa(fd, fam) {
                 continue;
             }
@@ -248,6 +254,10 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         if !v6.is_empty() {
             let _ = writeln!(t, "\tset gi{}_6 {{ type ipv6_addr; flags interval; elements = {{ {} }} }}", g.id, v6.join(", "));
         }
+    }
+    // Conjuntos por dominio (se llenan aparte, ver `dominios::refrescar`).
+    for (id, _) in crate::dominios::reglas_con_dominio(c) {
+        let _ = writeln!(t, "\tset dom{id}_4 {{ type ipv4_addr; }}\n\tset dom{id}_6 {{ type ipv6_addr; }}");
     }
     for g in c.grupos_puertos.iter().filter(|g| !g.puertos.is_empty()) {
         let l: Vec<_> = g.puertos.iter().map(rango_txt).collect();
@@ -1042,5 +1052,18 @@ mod tests {
         let mut f = fijas();
         f.ips_externas.clear();
         assert!(generar(&c, &f, 1000).unwrap().contains("dnat ip to 192.168.1.20"));
+    }
+
+    #[test]
+    fn dominio_genera_conjuntos() {
+        let mut c = router();
+        let mut r = regla(30, "interna", "externa", Accion::Bloquear);
+        r.destino = Direccion::Dominio { nombres: vec!["tiktok.com".into()] };
+        c.reglas.push(r);
+        let t = generado(&c);
+        assert!(t.contains("set dom30_4 { type ipv4_addr; }"), "{t}");
+        assert!(t.contains("set dom30_6 { type ipv6_addr; }"), "{t}");
+        assert!(t.contains("ip daddr @dom30_4 tcp dport 80 counter drop"), "{t}");
+        assert!(t.contains("ip6 daddr @dom30_6 tcp dport 80 counter drop"), "{t}");
     }
 }

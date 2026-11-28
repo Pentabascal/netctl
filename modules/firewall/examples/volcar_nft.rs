@@ -100,6 +100,16 @@ fn main() {
         n.protocolo = Protocolo::Udp;
         c.nat_propio.push(n);
     }
+    let dominio = args.iter().any(|a| a == "dominio");
+    if dominio {
+        c.reglas.push(Regla { id: 40, nombre: "Sin TikTok".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
+            accion: Accion::Rechazar, destino: Direccion::Dominio { nombres: vec!["tiktok.com".into()] }, ..Default::default() });
+    }
     let f = Fijas { panel: 8443, alcance_internet: false, ssh: 22, wg: vec![("wg0".into(), 51820)], ips_externas: vec!["203.0.113.4".parse().unwrap()] };
     print!("{}", nft::generar(&c, &f, 1_800_000_000).unwrap());
+    if dominio {
+        // Lo que escribe `dominios::refrescar` justo después.
+        print!("flush set inet netctl dom40_4\nadd element inet netctl dom40_4 {{ 203.0.113.9, 203.0.113.10 }}\n");
+        print!("flush set inet netctl dom40_6\nadd element inet netctl dom40_6 {{ 2001:db8::9 }}\n");
+    }
 }

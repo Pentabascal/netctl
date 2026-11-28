@@ -31,6 +31,12 @@ fn nat_propio_carga() {
     carga(&["nat"]);
 }
 
+/// Conjuntos por dominio y el `flush`/`add element` que los llena.
+#[test]
+fn dominio_carga() {
+    carga(&["dominio"]);
+}
+
 fn carga(args: &[&str]) {
     let script = Command::new(env!("CARGO"))
         .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft", "--"])
