@@ -1,6 +1,6 @@
 # netctl — panel web modular de red estilo UniFi
 
-Fecha: 2026-11-23 (ampliado 2026-11-27) · Repo: github.com/Pentabascal/netctl (público) · Estado: diseño
+Fecha: 2026-11-23 · Repo: github.com/Pentabascal/netctl (público) · Estado: diseño
 
 ## 1. Intención
 
@@ -31,21 +31,51 @@ módulos se descargan e instalan desde las Releases del repo**.
 - Módulo **Firewall** estilo UniFi (firewall por zonas con matriz zona→zona).
 - Módulo **Router**: enrutamiento como tal (interfaces/VLAN, rutas, rutas por
   política, multi-WAN, OSPF/BGP/RIP, QoS). Sin servicios tipo DHCP/DNS.
+- Módulo **DHCP** estilo UniFi OS: servidor DHCP por red (rango, puerta de
+  enlace, DNS, concesión, IPs fijas, opciones), lista de clientes en vivo y
+  relay. *Añadido por el usuario el 2026-11-27.*
 - Módulo **Seguridad**: IDS/IPS y protección de amenazas.
+- **VPN de configuración cero** basada en WireGuard, como Teleport de UniFi:
+  el administrador manda una invitación (enlace o QR) y la app propia de
+  netctl para **Android, Windows y Linux** se configura sola. Convive con el
+  servidor WireGuard clásico. *Añadido por el usuario el 2026-11-27.*
+- Vistas **Equipos** y **Topología** como las de UniFi: todos los equipos de
+  la red (también los clientes VPN) y un mapa de cómo está distribuida.
+  *Añadido por el usuario el 2026-11-27.*
+- **Unirse a un dominio Active Directory o a un directorio OpenLDAP**: los
+  usuarios del directorio entran al panel y usan la VPN con su cuenta de
+  siempre. *Añadido por el usuario el 2026-11-27.*
+- **Analizador de buenas prácticas (BPA)**, como el de Windows Server:
+  revisa la configuración de todo el panel y de cada módulo y dice qué
+  mejorar y cómo. *Añadido por el usuario el 2026-11-27.*
+- **Varias WAN** con modo respaldo (failover) o balanceo de carga, y módulo
+  **Alta disponibilidad** con «shadow mode» como UniFi: un servidor activo y
+  otro en espera que toma el control si el activo cae. *Añadido por el
+  usuario el 2026-11-27.*
 - Funciona igual en Debian 12+, Ubuntu 22.04+, openSUSE Leap 15.6 / SLES 15,
   RHEL / Rocky / Alma 9+ y Fedora actual.
 
 ## 3. No objetivos
 
 - Gestionar varios servidores desde un único panel (cada servidor tiene su
-  propio panel). *Decisión de Claude: el usuario no lo ha pedido.*
-- Multiusuario con roles; distribución pulida para terceros; traducciones.
+  propio panel). *Decisión de Claude: el usuario no lo ha pedido.* La
+  excepción es la pareja de alta disponibilidad (§9f): son dos servidores
+  que actúan como uno solo, y se configuran desde el panel del activo.
+- Roles finos de permisos en el panel; distribución pulida para terceros;
+  traducciones. (Con el directorio de §7.8 hay varios usuarios, pero todos
+  los que entran son administradores; un rol «solo lectura» queda como
+  posible mejora.)
 - Integración con LinuxServerPanel.
+- App de la VPN para iOS/macOS (requiere cuenta de desarrollador de Apple) y
+  publicación en tiendas (Google Play, Microsoft Store): en la v1 las apps
+  se descargan desde GitHub Releases. *Decisión de Claude: el usuario pidió
+  Android, Windows y Linux.*
 - Módulos de terceros (solo se aceptan módulos firmados con la clave del
   proyecto).
 - Horarios en reglas de firewall y filtrado por aplicación/DPI.
-- Servicios de red en el módulo Router: DHCP, DNS, DNS dinámico, UPnP
-  (decisión del usuario: «un router como tal»).
+- Servicios de red en el módulo Router: DNS, DNS dinámico, UPnP
+  (decisión del usuario: «un router como tal»). El DHCP va en su propio
+  módulo (§9e), no dentro del Router.
 
 ## 3b. Principios (lo más importante para el usuario)
 
@@ -59,7 +89,10 @@ decisión de detalle:
   muestra en Inicio el consumo de CPU y memoria de cada módulo.
 - **Bien dividido en la interfaz:** ninguna pantalla intenta hacerlo todo. Cada
   módulo tiene pocas entradas en la barra lateral y cada página, pestañas
-  claras. Los detalles se editan en el panel lateral, no en páginas largas.
+  claras. Lo más usado va primero; lo que se usa poco va al final de la
+  página, en su propia sección con título (nunca escondido tras un modo o un
+  «Avanzado»). Los detalles se editan en el panel lateral, no en páginas
+  largas.
 - **Fácil de configurar:** valores por defecto que funcionan sin tocar nada;
   asistentes para lo primero que hace cada módulo (primer servidor WireGuard,
   asignar interfaces a zonas, configurar WAN, activar IPS); validación en el
@@ -68,31 +101,49 @@ decisión de detalle:
 - **Bonito:** estética UniFi Network cuidada (espaciado, iconos de línea,
   tarjetas con métricas, gráficas de tráfico, estados con color) y coherente
   en todos los módulos gracias al kit compartido.
-
-### Reglas de interfaz (obligatorias, ampliación 2026-11-27)
-
-- **Lo más fácil posible, estilo UniFi, también en lo complejo:** la tarea
-  principal de cada pantalla en **3 pasos o menos**; asistente la primera vez;
-  valores recomendados ya puestos y marcados «(recomendado)».
-- **Sin modo avanzado ni secciones «Avanzado» escondidas** (el usuario lo pidió
-  y después lo quitó): todas las opciones necesarias visibles, ordenadas de la
-  más usada a la menos.
-- **Cada campo explicado:** una línea de ayuda debajo + un «?» con ejemplo y
-  valor recomendado; el término técnico va entre paréntesis
-  (p. ej. «Mantener viva la conexión (keepalive)»).
-- Cada fase lleva una **lista de comprobación de opciones** en su plan, para no
-  dejarse ninguna opción necesaria.
-- **Nunca hace falta editar ficheros a mano.** Cada módulo enseña en solo
-  lectura la configuración que genera y un registro de lo que aplica.
-- **Castellano llano.** Los errores dicen cómo arreglarlo, con botón directo
-  cuando se puede. No se muestra lo que no aplica a la máquina.
-- **Selector de equipos común** (§7.6) en todo campo que pida un equipo, IP o
-  red.
-- **Campos numéricos como texto con comprobador** (solo dígitos y dentro de
-  rango), no `<input type=number>`.
-- **Revisión visual antes de cerrar cada fase:** recorrido de la interfaz con
-  capturas en pantalla virtual (Xvfb :99 + xdotool + `import`), nunca abriendo
-  ventanas en el escritorio del usuario.
+- **Lo más fácil posible, estilo UniFi, también en lo complejo** (recordado
+  por el usuario el 2026-11-27). Las funciones avanzadas añadidas al plan
+  (varias WAN, shadow mode, directorio AD/LDAP, SNMP, VPN de configuración
+  cero, OSPF/BGP, Suricata) no pueden convertir el panel en un formulario de
+  expertos. Reglas que cada fase debe cumplir y comprobar en su revisión:
+  - La tarea principal de cada página se hace en **3 pasos o menos** con los
+    valores por defecto (p. ej. invitar a alguien a la VPN = «Invitar» →
+    nombre → «Enviar»).
+  - Cada función nueva entra con un **asistente** la primera vez y con
+    valores por defecto que funcionan.
+  - Se habla en **castellano llano** y se explica lo que pasará («Los equipos
+    de la LAN no notarán el cambio»), no el nombre del protocolo.
+  - Los avisos y errores dicen **cómo arreglarlo**, con botón directo si se
+    puede (p. ej. «La hora está desfasada 8 min — Activar NTP»).
+  - Si una función no aplica a la máquina (una sola tarjeta de red, sin
+    controlador UniFi, sin directorio), **no se muestra** o se reduce, en
+    vez de enseñar opciones vacías.
+  - Antes de dar una fase por terminada se recorre la interfaz con capturas
+    y se revisa con estas reglas.
+- **Sin modo avanzado, pero completo y explicado** (decisión del usuario el
+  2026-11-27, que sustituye a la idea de un modo avanzado). No hay modos ni
+  secciones «Avanzado» escondidas: todo lo que hace falta configurar está en
+  su página, ordenado de lo más usado a lo menos, y **cada cosa se explica**.
+  - **Completo:** el plan de cada fase incluye una **lista de comprobación de
+    opciones**: todo lo que el programa de debajo necesita o que un
+    administrador espera poder cambiar (p. ej. en DHCP: rango, puerta de
+    enlace, DNS, concesión, dominio, NTP, PXE, WINS, opciones por número,
+    reservas, relay) tiene su campo en la interfaz. Nada imprescindible
+    obliga a editar ficheros a mano.
+  - **Cada campo explicado:** etiqueta en castellano llano + una línea debajo
+    que dice **para qué sirve** y **qué pasa si se cambia**; si existe un
+    término técnico, va entre paréntesis («Pasar el control al otro servidor
+    (VRRP)»). Un icono «?» abre una explicación más larga con un **ejemplo**
+    y el **valor recomendado**.
+  - **Cada página y cada sección** empieza con una frase que explica qué se
+    hace ahí.
+  - **Valores por defecto marcados** como «(recomendado)», para que se pueda
+    dejar todo como está sin miedo.
+  - Las opciones que dependen de otra (p. ej. los campos de PPPoE solo si la
+    WAN es PPPoE) aparecen solo cuando aplican, con su explicación.
+  - Cada módulo enseña en su página de ajustes, en solo lectura, la
+    **configuración que genera** y un **registro** de lo que ha aplicado, para
+    entender qué hace por debajo.
 
 ## 4. Anti-objetivos (fallo aunque «funcione»)
 
@@ -167,7 +218,8 @@ netctl/
   permita systemd. *Decisión de Claude:* necesita instalar módulos y crear
   unidades systemd; separar en proceso web sin privilegios + ayudante root
   (como LinuxServerPanel) duplica trabajo para un uso privado.
-- **Acceso:** un único usuario administrador creado al instalar
+- **Acceso:** (desde fase 2d también usuarios de AD/OpenLDAP, §7.8) un
+  único usuario administrador local creado al instalar
   (`netctl-core admin set-password`), contraseña con argon2id, sesión por
   cookie `HttpOnly; Secure; SameSite=Strict`, CSRF por cabecera, bloqueo
   temporal tras 5 fallos.
@@ -184,12 +236,261 @@ netctl/
   sesión, añadiendo cabeceras con el usuario. El módulo no ve el exterior.
 - Endpoints obligatorios de todo módulo: `GET /salud`, `GET /resumen`
   (tarjetas para el panel de inicio del núcleo).
+- Endpoint opcional `GET /equipos`: los equipos que conoce el módulo (ver
+  §7.7). Lo ofrecen WireGuard, DHCP, Router y Alta disponibilidad.
+- Endpoints del BPA (§7.9), obligatorios para todo módulo a partir de la
+  fase 2e:
+  `GET /bpa` (resultado de sus comprobaciones) y `POST /bpa/arreglar/<id>`
+  (aplica el arreglo automático de una comprobación, si lo tiene).
 - Los módulos se descubren entre sí a través del núcleo
   (`GET /api/modulos` interno) — p. ej. el firewall pregunta si existe el
   módulo WireGuard para crear la zona VPN.
 - `netctl-sdk` implementa el servidor del socket, la lectura de cabeceras, la
   capa de distro y el «aplicar con confirmación», para que un módulo nuevo
   sea casi solo su lógica.
+
+### 7.7 Equipos y Topología (núcleo, fase 2c)
+
+Dos páginas del **núcleo** (no de un módulo), porque juntan lo que sabe cada
+módulo. Funcionan desde el primer día con lo mínimo y van ganando detalle a
+medida que se instalan módulos.
+
+**De dónde salen los equipos** (el núcleo los une por MAC, o por IP si no
+hay MAC):
+
+| Fuente | Qué aporta | Disponible |
+|---|---|---|
+| Tabla de vecinos (`ip neigh`) | IP + MAC de los equipos de cada red local | Siempre |
+| Base OUI (en `netctl-sdk`) | Fabricante a partir de la MAC | Siempre |
+| mDNS / NetBIOS / DNS inverso | Nombre del equipo | Siempre |
+| Escaneo ARP activo | Equipos que no han hablado últimamente | Opcional, desactivado por defecto |
+| LLDP y CDP (`lldpd`) | Switches y APs conectados directamente al servidor, y en qué puerto | Siempre (si `lldpd` está instalado; el núcleo lo ofrece) |
+| SNMP (v2c / v3) contra switches gestionados | Cadena switch→switch (LLDP-MIB) y en qué puerto está cada equipo (tabla de MACs, BRIDGE-MIB / Q-BRIDGE-MIB) | Opcional: el usuario añade cada switch con sus credenciales |
+| API de UniFi Network | APs y switches UniFi, qué equipos van por Wi-Fi, a qué AP, banda, señal y SSID | Opcional: solo si hay un controlador UniFi en la red |
+| Colocación manual | Switches no gestionados y APs sin API que el usuario dibuja | Siempre |
+| Módulo DHCP | Nombre del equipo, concesión, IP fija | Con DHCP |
+| Módulo WireGuard / netctl VPN | Clientes VPN: usuario, dispositivo, IP pública de origen, último saludo, tráfico | Con WireGuard |
+| Router / Firewall | Tráfico en vivo por equipo (contadores de nftables) | Si esta máquina enruta |
+| Alta disponibilidad | El otro servidor de la pareja | Con HA |
+
+**Página «Equipos»** (como «Client Devices» de UniFi):
+- Tarjetas arriba: **Equipos** (una sola tarjeta que une conectados y
+  nuevos: «24 conectados de 31 · 3 nuevos esta semana»), por red, clientes
+  VPN, desactivados.
+- **Una sola lista con todos los equipos conocidos**, estén conectados o no.
+  Los nuevos no van aparte: llevan una insignia «Nuevo» durante sus primeros
+  7 días y se pueden filtrar.
+- Columnas: icono del tipo de equipo, nombre, IP, MAC, fabricante, red/zona,
+  **conexión** (cable/Wi-Fi de la LAN, o **VPN** con insignia propia),
+  **fecha de unión** (primera vez que se vio en la red; para un dispositivo
+  netctl VPN, el día que aceptó la invitación), **última vez visto**, tráfico
+  ↓/↑ y **estado**:
+  - ● **Conectado** (verde).
+  - ○ **Desconectado** (gris): conocido pero sin actividad ahora.
+  - ⊘ **Desactivado** (rojo apagado): bloqueado en el Firewall o dispositivo
+    VPN revocado/pausado. Se sigue viendo en la lista, con el motivo, y desde
+    el panel lateral se puede volver a activar.
+- La lista se ordena por cualquier columna (por defecto: conectados primero,
+  luego por fecha de unión, más recientes arriba).
+- Filtros rápidos: Todos · Conectados · Desconectados · Desactivados ·
+  Nuevos · LAN · VPN; búsqueda; por red. Por defecto «Todos», así que los
+  desconectados y desactivados se ven siempre.
+- Los equipos conocidos se guardan **hasta que el usuario los olvida**
+  (botón «Olvidar», también en bloque). Opción para olvidar solos los
+  desconectados tras N días, **apagada por defecto**.
+- **Panel lateral** al pulsar un equipo, como el de cliente de wg-configurador:
+  nombre e icono editables, notas, IP/MAC/fabricante, red, historial de
+  conexión y gráfica de tráfico. Acciones según los módulos instalados:
+  «Fijar IP» (DHCP), «Bloquear» (Firewall: lo añade a un grupo bloqueado),
+  «Revocar» (dispositivo VPN), «Ver en la topología».
+- **Clientes VPN** en la misma tabla: se ven con su usuario, dispositivo
+  (Android/Windows/Linux para netctl VPN), IP dentro de la VPN, IP pública
+  desde la que conectan y país.
+- Aviso opcional cuando aparece un equipo nuevo en la red.
+- El tipo de equipo (móvil, portátil, impresora, TV, cámara, switch…) se
+  adivina por fabricante y nombre; el usuario lo puede corregir y se
+  recuerda.
+
+**Página «Topología»** (como el mapa de UniFi):
+- Diagrama en árbol, de arriba abajo: **Internet** → cada **WAN** (con su
+  estado de §9c) → **este servidor** (o la pareja activo/espera de §9f) →
+  cada **red** (LAN, VLAN y una rama **VPN**) → sus **equipos**.
+- **Switches y puntos de acceso**, en cuatro niveles que se suman:
+  1. **LLDP / CDP:** el switch o AP conectado directamente al servidor y el
+     puerto.
+  2. **SNMP:** página «Dispositivos de red» donde se añaden los switches
+     gestionados (IP + comunidad v2c o usuario/clave v3, solo lectura). Con
+     eso se dibuja la cadena entera de switches y cada equipo cuelga de su
+     **puerto real** (p. ej. «Switch planta 1 · puerto 12»). Sondeo cada
+     5 min; credenciales guardadas cifradas (600).
+  3. **UniFi Network:** si en la red hay un controlador UniFi (UDM, Cloud
+     Key o software autoalojado), se conecta con un usuario local de solo
+     lectura o una clave de API. Se leen sus APs y switches con sus enlaces, y de cada
+     cliente Wi-Fi: AP, banda, SSID y señal. En la tabla «Equipos» la
+     columna conexión pasa a decir «Wi-Fi · AP salón · 5 GHz · -58 dBm».
+     Omada y OpenWrt quedan como integraciones posibles a futuro,
+     con el mismo diseño de «conector».
+  4. **Manual:** en modo edición del mapa se añade un nodo «switch no
+     gestionado» o «AP» y se arrastran equipos debajo. Se recuerda, y si un
+     equipo colocado a mano aparece por SNMP/UniFi en otro sitio, el panel
+     avisa en vez de pisar lo manual.
+- Lo que no se pueda situar con ningún método cuelga directamente de su red,
+  con un aviso discreto «ubicación desconocida».
+- **Límites que el panel explica:** los switches no gestionados no son
+  detectables por ningún protocolo; distinguir cable de Wi-Fi solo es
+  posible con la integración del AP/controlador.
+- Con una sola tarjeta de red el mapa se simplifica: Internet → router de la
+  LAN → este servidor y los demás equipos al mismo nivel.
+- Líneas de color según estado (verde activa, gris caída/desconectada,
+  discontinua para VPN) y grosor según tráfico.
+- Zoom, arrastrar, plegar una red con muchos equipos (se muestra «+38
+  equipos»), y al pulsar un nodo se abre el mismo panel lateral que en
+  «Equipos».
+- Dibujado en el navegador con SVG, con el aspecto oscuro del kit; se
+  actualiza en vivo.
+
+**Privacidad y rendimiento:** el escaneo activo está apagado por defecto;
+los equipos conocidos no se borran solos (ver «Olvidar» arriba); el historial
+de conexiones de cada equipo se guarda 90 días (configurable);
+sondeo de estado cada 10 s.
+
+**Tests:** fecha de unión que no cambia aunque el equipo cambie de IP o
+vuelva tras desconectarse; estados conectado/desconectado/desactivado e
+insignia «Nuevo»; unión de equipos de varias fuentes (misma MAC con distinta IP,
+cliente VPN sin MAC), búsqueda de fabricante por OUI, adivinar el tipo de
+equipo, construcción del árbol de topología (con y sin LLDP, con una y
+varias interfaces, con pareja HA), lectura de tablas SNMP de ejemplo
+(LLDP-MIB, BRIDGE-MIB, Q-BRIDGE-MIB) y de respuestas de ejemplo de la API de
+UniFi, y prioridad entre fuentes (manual > UniFi > SNMP > LLDP > red).
+
+### 7.8 Directorio: Active Directory y OpenLDAP (núcleo, fase 2d)
+
+Página **Ajustes › Identidad** con tres opciones: **Solo cuentas locales**
+(por defecto, como en fase 1), **Active Directory** u **OpenLDAP**.
+
+**Active Directory — unión real al dominio:**
+- Se pide el dominio (`empresa.local`), un usuario con permiso para unir
+  equipos (solo se usa en ese momento, no se guarda) y, opcionalmente, la UO
+  donde crear la cuenta de equipo.
+- El panel comprueba antes: DNS que resuelve los controladores de dominio
+  (registros SRV), hora sincronizada (Kerberos falla con más de 5 min de
+  diferencia; ofrece activar NTP) y puertos alcanzables.
+- Une la máquina con `adcli` + `sssd` + Kerberos (paquetes en las tres
+  familias; *decisión de Claude: no se usa `realmd` porque en openSUSE/SLES
+  no es la vía habitual*). La cuenta de equipo queda creada en AD y netctl
+  consulta el directorio con ella (Kerberos), sin guardar contraseñas de
+  servicio.
+- **No abre el sistema a los usuarios del dominio:** por defecto `sssd`
+  queda configurado para que **solo netctl** los use; iniciar sesión por SSH
+  o consola con cuentas del dominio es una casilla aparte, apagada, con
+  aviso, y limitada a los grupos que se elijan.
+- Botón **Salir del dominio** (borra la cuenta de equipo si se dan
+  credenciales, o la deja y solo limpia la máquina).
+
+**OpenLDAP (y otros LDAP: 389 DS, FreeIPA en modo LDAP):**
+- Servidor(es) `ldaps://` o `ldap://` con StartTLS (**sin cifrar no se
+  permite**), certificado de la CA que se sube o se fija por huella.
+- Base DN, cuenta de servicio de solo lectura (DN + contraseña, guardada
+  cifrada, 600), filtro de usuarios y de grupos con valores típicos ya
+  rellenos (`posixAccount`/`inetOrgPerson`, `groupOfNames`/`posixGroup`,
+  `memberOf` si está).
+
+**Común a los dos:**
+- **Probar:** botón que comprueba la conexión, busca un usuario de prueba y
+  enseña sus grupos, antes de guardar nada.
+- **Quién entra al panel:** se elige un grupo del directorio (p. ej.
+  «netctl-admins»); sus miembros entran como administradores. El resto no.
+- **Cuenta local de emergencia:** el administrador local de fase 1 sigue
+  existiendo siempre, para entrar si el directorio no responde o se rompe la
+  unión. Se avisa si no tiene TOTP.
+- **Doble factor:** cuando el panel está abierto a internet, el TOTP sigue
+  siendo obligatorio también para los usuarios del directorio; cada uno lo
+  configura en su primer inicio de sesión.
+- **Usuarios desactivados o borrados** en el directorio no pueden entrar;
+  pertenencia a grupos en caché 5 min, con sincronización cada 15 min.
+- Los inicios de sesión quedan registrados con el usuario del directorio.
+
+**Uso en los módulos:**
+- **netctl VPN (§8b):**
+  - Los usuarios de la VPN pueden ser usuarios del directorio. Además de las
+    invitaciones, la app permite **«Iniciar sesión con usuario del
+    dominio»**: dirección del servidor + usuario y contraseña → se inscribe
+    el dispositivo sin invitación.
+  - **Grupos → permisos:** se asigna a cada grupo un perfil de acceso (p. ej.
+    «VPN-Intranet» → toda la intranet; «VPN-Contabilidad» → subred de
+    contabilidad + internet). Si un usuario está en varios, se suman.
+  - Si un usuario se desactiva en el directorio o sale del grupo, sus
+    dispositivos pasan solos a **Desactivado** (se ven así en «Equipos»,
+    §7.7, con el motivo «usuario desactivado en el dominio») y su túnel se
+    corta en la siguiente sincronización.
+- **Servidor WireGuard clásico:** funciona por claves, sin usuario; no
+  cambia. Se puede anotar a qué usuario del directorio pertenece cada
+  cliente, solo como dato.
+- **Firewall (§9):** grupos de origen dinámicos «usuarios VPN del grupo X»
+  (las IPs de sus dispositivos conectados), para reglas como «solo el grupo
+  Informática puede llegar a la red de servidores».
+- **Equipos (§7.7):** los clientes VPN muestran el nombre completo del
+  usuario del directorio.
+
+**Tests:** generación de la config de `sssd`/Kerberos, filtros LDAP con
+caracteres especiales (escape correcto, sin inyección), resolución de grupos
+anidados de AD, suma de perfiles de varios grupos, desactivar dispositivos
+al salir del grupo, y acceso con la cuenta local cuando el directorio no
+responde. La prueba real contra un AD y un OpenLDAP la hace el usuario con
+una guía paso a paso.
+
+### 7.9 Analizador de buenas prácticas, BPA (núcleo, fase 2e)
+
+Página **«Buenas prácticas»** en la barra lateral del núcleo, como el Best
+Practices Analyzer de Windows Server pero con el aspecto y la sencillez del
+resto del panel.
+
+**Cómo funciona:**
+- El núcleo tiene sus propias comprobaciones y pide las suyas a cada módulo
+  instalado (`GET /bpa`). Cada módulo es responsable de las comprobaciones de
+  lo que configura.
+- Se ejecuta **al pulsar «Analizar ahora»**, **cada día** solo (hora
+  configurable) y **después de cada cambio aplicado** (solo las del módulo
+  que cambió).
+- Tarjeta en **Inicio** con el resumen («2 errores · 5 avisos · 31
+  correctas») y una insignia en la barra lateral si hay errores.
+
+**Cada resultado muestra** (siguiendo el principio «completo y explicado»):
+- **Gravedad:** ✖ Error (riesgo real, p. ej. seguridad), ⚠ Aviso (conviene
+  cambiarlo), ℹ Información (sugerencia), ✔ Correcto.
+- **Qué pasa**, en castellano llano: «El panel sigue con la contraseña de
+  fábrica».
+- **Por qué importa:** «Cualquiera de la red que la conozca puede entrar».
+- **Cómo arreglarlo**, paso a paso, con enlace a la página exacta.
+- Botón **«Arreglar»** cuando se puede hacer solo: enseña antes lo que va a
+  cambiar y lo aplica con las mismas validaciones (y con la confirmación de
+  60 s si toca red o firewall).
+- **«Ignorar»** con un motivo opcional; lo ignorado no desaparece, pasa a la
+  pestaña «Ignorados» y se puede volver a activar.
+
+**Vista:** filtros por gravedad y por módulo, búsqueda, lista de
+«Correctas» también visible (para ver qué se comprobó), **historial** de
+análisis con la evolución, y **exportar el informe** (HTML imprimible / PDF).
+
+**Comprobaciones previstas** (cada fase añade las de su módulo y no se da
+por terminada sin ellas):
+
+| Módulo | Ejemplos |
+|---|---|
+| Núcleo / sistema | Contraseña de fábrica sin cambiar; panel abierto a internet; cuenta local de emergencia sin TOTP; certificado autofirmado o a punto de caducar; hora sin sincronizar (NTP); actualizaciones del sistema o del núcleo pendientes; poco espacio en disco; versiones de módulos desfasadas |
+| WireGuard / netctl VPN | Clientes sin clave precompartida; clientes sin conectar en más de 90 días; clientes con internet + toda la intranet (permisos más amplios de lo necesario); invitaciones sin usar caducadas acumuladas; varias WAN pero el servidor clásico con un Endpoint fijo; dispositivos de usuarios desactivados en el directorio |
+| Firewall | Regla que lo permite todo; reglas que nunca se usan (0 aciertos en 30 días); SSH o el panel abiertos desde Externa; reenvíos de puertos a equipos que ya no existen; reglas duplicadas o tapadas por otra anterior |
+| Router | Una sola WAN sin respaldo; WAN sin comprobación de salud; MTU distinto entre extremos; rutas estáticas hacia una puerta de enlace que no responde |
+| DHCP | Rango casi agotado (>90 %); otro servidor DHCP detectado en la red; IPs fijas dentro del rango; puerta de enlace o DNS que no responden |
+| Seguridad | Firmas sin actualizar en más de 7 días; IPS solo en modo detección; CPU al límite con el tráfico actual |
+| Alta disponibilidad | Última sincronización antigua; versiones distintas en los dos servidores; enlace de sincronización sin redundancia |
+| Directorio | Hora desfasada con el dominio; cuenta de servicio con más permisos de los necesarios; certificado del servidor LDAP a punto de caducar |
+| Equipos | Equipos nuevos sin identificar; nombres repetidos |
+
+**Tests:** cada comprobación con estados de ejemplo que la hacen pasar y
+fallar; que «Arreglar» deja la comprobación en verde; que «Ignorar» se
+recuerda; y que un módulo que no responde sale como aviso, sin romper el
+análisis de los demás.
 
 ### 7.4 Paquete de módulo y catálogo
 
@@ -244,12 +545,31 @@ netctl/
   `/api/m/<id>/`.
 - Página **Inicio**: tarjetas `/resumen` de cada módulo. Página **Módulos**:
   catálogo, instalados, botones instalar/actualizar/quitar.
-- **Selector de equipos** (componente del kit, lo usan todos los módulos):
-  desplegable con buscador como en UniFi (nombre, IP, MAC, fabricante, estado)
-  y, en el mismo campo, se puede escribir a mano una IP, una red CIDR o un
-  rango. Si se elige un equipo, la regla queda **vinculada a su MAC**: si el
-  equipo cambia de IP, las reglas que lo usan se regeneran solas. La lista sale
-  de Equipos (§7.7).
+- **Selector de equipos** (componente del kit, pedido por el usuario el
+  2026-11-27). **En todo el panel**, cualquier campo donde se elige un
+  equipo o una IP usa este mismo selector, como los de UniFi: reenvío de
+  puertos, reglas del Firewall (origen/destino), IPs fijas del DHCP, rutas
+  por política, límites de QoS, grupos de IPs, acciones del BPA…
+  - **Lista desplegable con buscador**: cada equipo con su icono, nombre,
+    IP, MAC (en pequeño) y estado (● conectado / ○ desconectado / ⊘
+    desactivado). Agrupada por red (LAN, VLAN, VPN) y con los conectados
+    primero. Se busca por nombre, IP, MAC o fabricante.
+  - **IP a mano en el mismo campo:** si lo escrito es una IP válida que no
+    está en la lista, aparece la opción «Usar 192.168.1.50 (escrita a
+    mano)». Se valida al momento (formato, que esté en una red conocida, que
+    no sea la de la propia máquina) con el aviso en castellano llano.
+  - Donde el campo lo admite (Firewall, grupos de IPs, QoS) también se
+    puede elegir **una red entera** de la lista o escribir una **red CIDR o
+    un rango** (`192.168.1.0/24`, `192.168.1.10-192.168.1.20`), y elegir
+    **varios** a la vez (se muestran como fichas que se quitan con ×).
+  - Lo elegido se muestra como una ficha con icono + nombre + IP; si es una
+    IP a mano, con un icono de lápiz.
+  - **Vinculado al equipo, no solo a la IP:** si se eligió un equipo de la
+    lista y cambia de IP, las reglas que lo usan se actualizan solas y se
+    avisa. Si se escribió una IP a mano y luego aparece un equipo con esa
+    IP, se ofrece vincularlo.
+  - Si un equipo elegido se olvida en «Equipos», las reglas que lo usan se
+    muestran antes de olvidarlo y se pide qué hacer con ellas.
 
 ```
 ┌────┬──────────────────────────────────────────────────────┐
@@ -262,38 +582,6 @@ netctl/
 │    │ movil     10.8.0.3   ○ Descon.  hace 3 h      40 MB  │
 └────┴──────────────────────────────────────────────────────┘
 ```
-
-### 7.7 Equipos y Topología (núcleo, fase 2c)
-
-- **Una sola lista** de equipos: conectados y nuevos juntos, con estado
-  conectado / desconectado / desactivado y **fecha de unión** (primera vez
-  visto). **Nada se borra solo**; se borra a mano. Nombre, icono y notas
-  editables.
-- Fuentes: tabla ARP/vecinos, concesiones del módulo DHCP y **clientes VPN**
-  (incluidos). Cada módulo aporta los suyos con `GET /equipos`.
-- **Topología:** mapa en árbol (servidor → switches/AP → equipos). Switches y
-  AP por LLDP/CDP y SNMP; API de UniFi **solo si hay controlador** (no consta
-  que el usuario tenga uno); colocación manual siempre posible.
-- Alimenta el selector de equipos (§7.6).
-
-### 7.8 Directorio AD/LDAP (núcleo, fase 2d)
-
-- **Unión real a Active Directory** con adcli + sssd. Por defecto **no** se
-  abre SSH a los usuarios del dominio (opción aparte).
-- **OpenLDAP**, solo con conexión cifrada (LDAPS o StartTLS).
-- Un grupo del directorio = administradores del panel. Se conserva una
-  **cuenta local de emergencia**.
-- Grupos → permisos de la VPN; dar de baja a un usuario en el directorio
-  desactiva sus dispositivos VPN.
-- Grupos dinámicos en el Firewall (reglas por grupo de usuarios).
-
-### 7.9 BPA — analizador de buenas prácticas (núcleo, fase 2e)
-
-- Cada módulo aporta `GET /bpa` (comprobaciones) y
-  `POST /bpa/arreglar/<id>`.
-- Gravedades (crítico / aviso / info), «por qué importa» y «cómo arreglarlo»,
-  botones **Arreglar** e **Ignorar**, historial e informe exportable.
-- A partir de la fase 2e, cada fase trae sus propias comprobaciones.
 
 ## 8. Módulo WireGuard (fase 1)
 
@@ -318,18 +606,104 @@ netctl/
   borrar.
 - Ajustes del servidor en una pestaña aparte.
 
-## 8b. netctl VPN de configuración cero (fase 2b; nombre provisional)
+## 8b. VPN de configuración cero «netctl VPN» (fase 2b)
 
-- Dentro del módulo WireGuard, al estilo de UniFi Teleport.
-- **Invitaciones** por enlace, QR o código: de un solo uso y con caducidad.
-- La **clave privada se genera en el dispositivo**; el servidor nunca la ve.
-- **Servicio de inscripción separado del panel** (el panel no se expone para
-  inscribir dispositivos).
-- Varias direcciones del servidor (multi-WAN y alta disponibilidad): el
-  cliente prueba en orden.
-- **Relé opcional** `netctl-rele` (UDP y TCP/443) para redes que bloquean UDP.
-- Apps en orden **Linux → Windows → Android**, con un núcleo Rust compartido
-  (`crates/netctl-vpn-cliente`, con uniffi en Android).
+El módulo WireGuard pasa a tener **dos tipos de servidor**, que pueden
+funcionar a la vez en interfaces y puertos distintos:
+
+| | **Servidor WireGuard** (el de fase 1) | **netctl VPN** (configuración cero) |
+|---|---|---|
+| Cliente | Cualquier app oficial de WireGuard | App propia de netctl |
+| Alta de un usuario | Se crea el cliente y se le pasa su `.conf` o QR | Se le manda una invitación; la app hace el resto |
+| Claves | Las genera el servidor | La privada se genera en el dispositivo y nunca sale de él |
+| Varias WAN / HA | Un solo Endpoint fijo | La app recibe todas las direcciones y prueba la que funcione |
+
+Los permisos por cliente (internet, toda la intranet, subredes, CIDR extra)
+son los mismos en los dos tipos; el motor por debajo es WireGuard igual.
+
+**Nombre provisional:** «netctl VPN» (se puede cambiar).
+
+### Servidor (dentro del módulo WireGuard)
+- **Usuarios y dispositivos:** cada persona es un usuario con sus permisos;
+  cada usuario puede tener varios dispositivos (móvil, portátil…), cada uno
+  con su propia clave e IP. Se ve nombre, sistema, última conexión, tráfico y
+  estado en vivo, y se puede **revocar** un dispositivo o un usuario entero.
+- **Invitaciones:** botón «Invitar» → enlace `netctl://…` + QR + código corto
+  para escribir a mano. Cada invitación es de **un solo uso**, caduca (24 h
+  por defecto, configurable) y opcionalmente queda **pendiente de aprobación**
+  del administrador antes de activarse. Se puede enviar por correo, copiar o
+  enseñar en pantalla.
+- **Inscripción:** la app genera su par de claves, manda la pública, el
+  nombre del dispositivo y el código de la invitación; el servidor crea el
+  dispositivo y devuelve su configuración. La invitación lleva la huella del
+  certificado del servidor, así que la app no se fía de nadie más (no hace
+  falta un certificado público ni dominio).
+- **Servicio de inscripción aparte del panel:** escucha en su propio puerto
+  TCP y solo ofrece tres cosas: inscribirse con una invitación, pedir la
+  configuración actualizada (direcciones de las WAN, permisos, DNS) y
+  comprobar que el dispositivo sigue autorizado. El panel de administración
+  **no** tiene que estar abierto a internet. Límite de intentos por IP y
+  registro de inscripciones.
+- **Direcciones del servidor:** el módulo junta todas las formas de llegar
+  (IPs de cada WAN, dominio si hay, IP virtual de la pareja HA) y la app las
+  recibe cada vez que conecta. Así funcionan solos el cambio de WAN (§9c) y
+  el shadow mode (§9f), sin DNS dinámico.
+
+### Sin abrir puertos: relé opcional
+Para cuando el servidor está detrás de un router que no se puede tocar
+(como Teleport, que funciona sin redirigir puertos):
+- **Relé** (`netctl-rele`): programa pequeño que el usuario instala en una
+  máquina con IP pública (un VPS o un servidor propio). El servidor netctl
+  mantiene una conexión saliente con el relé; las apps que no llegan directo
+  se conectan al relé y este reenvía el tráfico.
+- El relé **no puede leer nada**: solo pasa paquetes de WireGuard ya
+  cifrados de extremo a extremo.
+- Salida por UDP y, en redes que lo bloquean (hoteles, empresas), por
+  TCP/443 como si fuera web.
+- La app prueba primero conexión directa y usa el relé solo si hace falta.
+- **Más adelante** (no en la v1): conexión directa atravesando NAT
+  (*hole punching*) con el relé como mediador, para no gastar su ancho de
+  banda.
+
+### Apps (Android, Windows, Linux)
+- **Núcleo compartido en Rust** (`crates/netctl-vpn-cliente`): protocolo de
+  inscripción, elección de dirección (directa / relé), renovación de config,
+  almacenamiento seguro de la clave. Lo usan las tres apps; en Android a
+  través de `uniffi`.
+- **Aspecto:** el mismo estilo oscuro UniFi del panel. Pantalla principal
+  con un botón grande «Conectar», estado, IP, tiempo conectado y tráfico;
+  lista de servidores (se pueden tener varios sitios); «Unirse» con enlace,
+  QR o código.
+- **Opciones:** conectar al arrancar, conectar solo en redes Wi-Fi no de
+  confianza (Android), bloquear el tráfico si se cae la VPN (*kill switch*,
+  Windows y Linux), notificaciones de conexión.
+- **Android:** Kotlin + Jetpack Compose, túnel con la librería oficial
+  `com.wireguard.android:tunnel` (VpnService). Lector de QR integrado. APK
+  firmado con clave propia, publicado en GitHub Releases.
+- **Windows:** app Rust (egui, como wg-configurador) + servicio de Windows
+  que gestiona el túnel con `wireguard-nt` (driver oficial de WireGuard).
+  Icono en la bandeja del sistema. Instalador `.exe` con NSIS. Sin
+  certificado de firma de código, Windows SmartScreen mostrará un aviso la
+  primera vez (se documenta cómo pasarlo).
+- **Linux:** la misma app Rust (egui) + un pequeño servicio con permisos que
+  crea la interfaz WireGuard del kernel (netlink). Icono en la bandeja.
+  Paquetes `.deb`, `.rpm` y AppImage.
+- **Actualizaciones:** la app avisa cuando hay versión nueva en GitHub
+  Releases.
+
+### Tests
+Protocolo de inscripción (invitación caducada, reutilizada, pendiente de
+aprobación, dispositivo revocado), elección de dirección y relé, generación
+de la config del dispositivo con sus permisos, y el relé reenviando sin
+poder leer. La prueba real en móvil, Windows y Linux la hace el usuario con
+una guía paso a paso.
+
+### Orden de construcción
+1. Servidor: usuarios, dispositivos, invitaciones, servicio de inscripción.
+2. App Linux (la más fácil de probar en este equipo).
+3. App Windows.
+4. App Android.
+5. Relé.
 
 ## 9. Módulo Firewall (fase 2)
 
@@ -341,10 +715,12 @@ netctl/
 - **Matriz zona→zona** con política por defecto (permitir / bloquear) y, al
   pulsar una casilla, sus reglas: acción (permitir/bloquear/rechazar),
   protocolo, puertos, IP/red origen y destino, listas reutilizables (grupos de
-  IPs, grupos de puertos), orden, activar/desactivar, contador de aciertos.
+  IPs, grupos de puertos y, con directorio, grupos de usuarios VPN §7.8),
+  orden, activar/desactivar, contador de aciertos.
 - **Se adapta a la máquina:** con una sola interfaz la vista se reduce a
   «qué puede entrar a esta máquina» (Externa→Gateway); con varias, matriz
-  completa + NAT (masquerade) + reenvío de puertos (DNAT).
+  completa + NAT (masquerade) + reenvío de puertos (DNAT, ver «Reenvío de
+  puertos» abajo).
 - **Relación con WireGuard:** el firewall decide a nivel de zona (¿puede VPN
   hablar con Interna?), el módulo WireGuard decide por cliente. Un paquete
   debe ser aceptado por las dos tablas (en nftables un drop en cualquier tabla
@@ -354,18 +730,79 @@ netctl/
   solo. El puerto del panel y SSH desde la zona Interna están siempre
   permitidos (regla fija, visible pero no borrable).
 - Al instalarse: avisa, guarda el ruleset actual y desactiva `ufw`/`firewalld`.
-  Al desinstalarse: ofrece restaurar lo guardado. Al instalarse, el módulo
-  WireGuard deja de poner su NAT (lo pone el Firewall).
-- **Reenvío de puertos** (DNAT), ampliación 2026-11-27:
-  - **Asistente de 3 pasos:** (1) equipo de destino con el selector de equipos;
-    (2) servicio, con plantillas (web, SSH, RDP, juegos, cámaras…) o puerto a
-    mano; (3) desde dónde se permite (cualquiera / IPs o países concretos) y
-    **caducidad opcional**.
-  - **Lista agrupada por equipo** con estado, contadores de uso y
-    activar/desactivar.
-  - **Avisos** de choques (mismo puerto externo ya usado, choca con el panel o
-    con WireGuard) y de servicios delicados expuestos a internet (RDP, SMB,
-    bases de datos, SSH).
+  Al desinstalarse: ofrece restaurar lo guardado.
+
+### Reenvío de puertos (dentro del Firewall)
+
+Objetivo (pedido por el usuario el 2026-11-27): **crear un reenvío debe ser
+tan fácil como en UniFi o más, y gestionarlos, igual de fácil.** Por debajo
+son reglas DNAT de nftables en la tabla `netctl`, pero el usuario nunca
+tiene que pensar en NAT ni en zonas.
+
+**Crear: asistente de 3 pasos** (botón «+ Abrir puerto»):
+1. **¿A qué equipo?** Selector de equipos (§7.6): lista con buscador como
+   en UniFi, o escribir la IP a mano en el mismo campo. Si su IP la da el DHCP y no es fija, una casilla
+   marcada por defecto la fija («para que la regla no se rompa si cambia de
+   IP»).
+2. **¿Qué servicio?** Tarjetas con servicios habituales que rellenan solos
+   puerto y protocolo: Web (80/443), SSH, Escritorio remoto, Minecraft,
+   servidor de juegos, Plex/Jellyfin, cámaras (RTSP), FTP, correo… y
+   «Otro» para poner el puerto (o un rango, p. ej. `27015-27030`) y elegir
+   TCP, UDP o los dos. Por defecto el puerto de fuera es el mismo que el de
+   dentro; cambiarlo es un campo opcional en el mismo paso.
+3. **¿Desde dónde?** «Desde cualquier sitio de internet» (por defecto),
+   «Solo desde estas IPs» o, con el módulo Seguridad, «Solo desde estos
+   países». Opcional: **caduca** en 1 hora / 1 día / 1 semana / nunca (por
+   defecto nunca), útil para abrir algo un rato.
+
+Al pulsar «Crear» se aplica (con la confirmación de 60 s del Firewall) y
+se muestra **cómo conectarse**: «Desde fuera, usa 85.12.34.56:25565»
+(con botón copiar; con varias WAN, una línea por WAN o el dominio si hay).
+
+Valores por defecto que no se preguntan (se pueden cambiar luego en el
+panel lateral, cada uno explicado): todas las WAN, acceso desde dentro con
+la IP pública activado (*NAT loopback / hairpin*), registro de conexiones
+desactivado.
+
+**Gestionar:** página «Reenvío de puertos»:
+- Lista **agrupada por equipo** («Servidor-casa · 3 puertos»), cada fila
+  con servicio, puerto de fuera → dentro, protocolo, desde dónde, estado y
+  un interruptor para **activar/desactivar** sin borrar.
+- **Estado de cada regla**, en llano: ● Funcionando (el equipo está
+  conectado y responde en ese puerto), ⚠ El equipo está desconectado, ⚠ El
+  equipo no responde en ese puerto (el servidor prueba a conectar desde
+  dentro), ⏱ Caduca en 3 h, ⊘ Desactivada.
+- Columna **«Última conexión»** y número de conexiones (contadores de
+  nftables), para saber qué reglas se usan.
+- Panel lateral para editar cualquier cosa, **duplicar** (p. ej. el mismo
+  servicio a otro equipo) y borrar.
+- Filtros: Todas · Activas · Desactivadas · Con problemas · Temporales; y
+  búsqueda por equipo, servicio o puerto.
+- **Accesos directos** desde el panel lateral de cada equipo («Abrir un
+  puerto hacia este equipo», con sus reglas listadas) y desde cada WAN en
+  Router › Internet.
+
+**Avisos al crear o editar** (con cómo arreglarlo):
+- El puerto de fuera ya lo usa otra regla, el panel, SSH o WireGuard → se
+  ofrece el siguiente libre.
+- El servicio es delicado abierto a todo internet (Escritorio remoto, SSH,
+  bases de datos) → se recomienda «Solo desde estas IPs», la VPN o netctl
+  VPN, con botón directo.
+- El equipo de destino está en la zona VPN o Gateway → se explica que no
+  hace falta reenvío.
+
+**BPA (§7.9):** reglas hacia equipos que ya no existen, servicios delicados
+abiertos a todo internet, reglas sin uso en 90 días, reglas temporales
+caducadas que siguen guardadas.
+
+**Si no aplica:** con una sola tarjeta de red no hay reenvío posible; en su
+lugar la página explica cómo abrir el puerto en el router de la red y
+ofrece la regla equivalente Externa→Gateway («permitir entrar a esta
+máquina por el puerto X»).
+
+**Tests:** generación de DNAT + permiso de entrada + loopback para puerto
+simple, rango y puerto distinto fuera/dentro; varias WAN; caducidad; detección
+de choques de puertos; plantillas de servicios; estado «no responde».
 
 ## 9b. Decisiones tras la revisión (decisiones de Claude)
 
@@ -393,13 +830,14 @@ netctl/
   instalación se bloquea.
 - **Firma:** se verifica con el crate `minisign-verify`. Rotar o revocar la
   clave queda fuera de la v1.
-- **Primer acceso (así quedó en el núcleo 0.1.3):** contraseña de fábrica
-  «root», con un aviso en el panel hasta que se cambie. Se puede cambiar
-  desde Ajustes o con `netctl-core admin set-password`.
+- **Primer acceso:** `install.sh` / el postinstall genera una contraseña de
+  administrador aleatoria y la muestra una vez. Se puede cambiar con
+  `netctl-core admin set-password`.
 
 ## 9c. Módulo Router (fase 3)
 
-Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
+Enrutamiento «como tal»; sin DNS/DDNS/UPnP. El servidor DHCP es el módulo
+aparte de §9e; el Router le ofrece sus redes (LAN/VLAN) si está instalado.
 
 - **Interfaces:** WAN (DHCP cliente, IP fija, PPPoE), LAN y VLAN; cada una se
   asigna a una zona del Firewall. Las interfaces que gestiona el módulo se
@@ -410,12 +848,39 @@ Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
 - **Tabla de rutas** en vivo y **rutas estáticas**.
 - **Rutas por política** (origen, destino, puerto → conexión o VPN) con tablas
   de rutas + marcas de nftables.
-- **Varias WAN:** respaldo por prioridad, balanceo por conexión con pesos, o
-  mixto; comprobación de salud por WAN.
+- **Varias WAN** (sin límite fijo; cada una puede ser DHCP, IP fija o
+  PPPoE). Página «Internet» como la de UniFi, con una tarjeta por WAN:
+  estado, IP pública, latencia, pérdida y tráfico en vivo.
+  - **Modo respaldo (failover):** cada WAN tiene una prioridad; se usa la
+    de mayor prioridad que esté sana y, si cae, pasa a la siguiente. Al
+    volver la principal, regresa sola (se puede desactivar el regreso
+    automático).
+  - **Modo balanceo de carga:** cada WAN tiene un peso (p. ej. 70/30). El
+    reparto es por conexión, no por paquete: una conexión se queda siempre
+    en la misma WAN (marca de conntrack), así no se rompen sesiones web,
+    juegos ni VPN. Si una WAN cae, sus conexiones nuevas van a las demás.
+  - **Mixto:** se pueden combinar, p. ej. balancear entre WAN1 y WAN2 y dejar
+    WAN3 (4G) solo de respaldo.
+  - **Comprobación de salud** por WAN: ping a varios destinos configurables
+    (por defecto 1.1.1.1 y 8.8.8.8) por esa salida concreta; se da por caída
+    si fallan todos durante N comprobaciones seguidas y por recuperada tras M
+    correctas (valores en campos de texto con comprobador).
+  - **Reglas por WAN:** las rutas por política pueden forzar cierto tráfico
+    (origen, destino, puerto) por una WAN concreta, con opción de usar o no
+    las demás si esa cae.
+  - Cada WAN tiene su propio NAT (masquerade por su interfaz), que pone el
+    Firewall; el Router solo le dice qué interfaces son WAN.
+  - **Historial:** registro de caídas y cambios de WAN, y aviso en el panel.
+  - **Relación con WireGuard:** con la app netctl VPN (§8b) no hay que hacer
+    nada: recibe todas las direcciones. Para el servidor WireGuard clásico,
+    un cliente solo admite un Endpoint. El módulo WireGuard avisa de que, con varias WAN, conviene
+    usar un nombre de dominio como Endpoint y apuntarlo a la WAN activa (el
+    DNS dinámico sigue fuera de alcance). Las respuestas del servidor salen
+    por la misma WAN por la que entró la conexión.
 - **Enrutamiento dinámico** OSPF, BGP y RIP con FRR: vecinos, estado de
-  sesiones, rutas aprendidas. Pestaña propia, plegada por defecto.
-- **QoS** con CAKE: límites de ancho de banda por red/dispositivo y control de
-  latencia.
+  sesiones, rutas aprendidas. Pestaña propia, con cada opción explicada.
+- **QoS:** límites de ancho de banda por red/dispositivo y control de latencia
+  (CAKE / fq_codel con `tc`).
 - NAT y reenvío de puertos siguen en el Firewall.
 - Cambios de red con el «aplicar con confirmación» de 60 s.
 
@@ -434,40 +899,121 @@ Enrutamiento «como tal»; sin DHCP/DNS/DDNS/UPnP.
 
 ## 9e. Módulo DHCP (fase 3b)
 
-- dnsmasq **solo DHCP**, en una instancia propia (no toca otro dnsmasq).
-- Configuración por red estilo UniFi OS (rango, puerta de enlace, DNS,
-  duración de la concesión), **IPs fijas**, clientes en vivo con botón
-  «Fijar IP», relé DHCP y **detección de servidores DHCP intrusos**.
-- No depende del módulo Router.
+Servidor DHCPv4 como el de UniFi OS: se configura dentro de cada red, no en
+un fichero aparte.
 
-## 9f. Módulo Alta disponibilidad / shadow mode (fase 5)
+- **Motor:** `dnsmasq` en modo solo DHCP (`port=0`, sin DNS), con su propia
+  instancia y servicio (`netctl-dhcp`), sin tocar un dnsmasq que ya exista.
+  *Decisión de Claude:* está en los repositorios base de Debian, openSUSE y
+  RHEL (Kea necesita EPEL en algunos RHEL), es el motor que usa UniFi OS y el
+  fichero de concesiones es fácil de leer en vivo.
+- **Independiente del Router:** funciona sobre cualquier interfaz de la
+  máquina (p. ej. un servidor con una sola tarjeta que da DHCP a la LAN de
+  otro router). Si el Router está instalado, sus redes LAN/VLAN aparecen
+  solas y cada red muestra su bloque «DHCP».
+- **Por red** (igual que en UniFi OS):
+  - Modo: **Servidor**, **Relay** (reenviar a otro servidor DHCP) o
+    **Desactivado**.
+  - Rango de IPs (inicio–fin), con sugerencia automática a partir de la red
+    (p. ej. .6–.254) y aviso si choca con la IP de la puerta de enlace o con
+    IPs fijas.
+  - Puerta de enlace: automática (la IP de la máquina en esa red) o manual.
+  - Servidores DNS: automáticos (la puerta de enlace) o hasta 4 manuales.
+  - Tiempo de concesión (por defecto 86400 s, campo de texto con
+    comprobador como el resto del panel).
+  - Nombre de dominio.
+  - Otras opciones (sección «Más opciones» al final del bloque, visible y
+    explicada): NTP, arranque por red / PXE (opciones 66/67), WINS, y
+    opciones DHCP personalizadas (número + valor).
+- **IPs fijas (reservas):** MAC → IP con nombre. La IP puede estar dentro
+  o fuera del rango; se avisa si está repetida o fuera de la red.
+- **Clientes en vivo:** tabla con nombre de equipo, MAC, fabricante (por el
+  OUI, con la base de datos compartida de `netctl-sdk`, §7.7), IP, red y tiempo restante
+  de concesión. Botón «Fijar IP» en cada fila que crea la reserva con un
+  clic; filtro por red y búsqueda.
+- **Detección de servidores DHCP intrusos** (como el «DHCP Guarding» de
+  UniFi, pero solo aviso): sondeo DHCPDISCOVER periódico en cada red; si
+  responde otro servidor, el panel muestra su IP y MAC.
+- **Firewall:** si está el módulo Firewall, el DHCP pide abrir UDP 67/68
+  hacia Gateway desde las zonas con DHCP activo (regla fija, visible). Sin
+  Firewall, abre los puertos en firewalld/ufw como hace WireGuard.
+- **Aplicar:** genera la config, la valida con `dnsmasq --test` y recarga el
+  servicio. Sin confirmación de 60 s: un cambio de DHCP no corta el panel ni
+  SSH. Las concesiones se conservan entre reinicios.
+- **Tests:** generación de la config de dnsmasq (rango, opciones, reservas,
+  relay), validaciones (rango fuera de red, solapes, MAC mal escrita),
+  lectura del fichero de concesiones y búsqueda de fabricante por OUI.
 
-- Pareja **activo + en espera**. keepalived (VRRP) con IP virtual y
-  conntrackd (las conexiones sobreviven al cambio).
-- Sincronización de toda la configuración de netctl y de las concesiones DHCP.
-- Emparejado por código, protección contra cerebro dividido y actualizaciones
-  sin cortes (se actualiza primero el de reserva).
+## 9f. Módulo Alta disponibilidad / «shadow mode» (fase 5)
+
+Dos servidores netctl forman una pareja: uno **activo** y otro **en
+espera** (shadow). Si el activo cae, el de espera toma el control en pocos
+segundos sin que haya que tocar los clientes.
+
+- **Solo parejas de dos.** No es un panel para gestionar muchos servidores:
+  se configura todo en el activo y se copia al de espera.
+- **Requisitos que el panel comprueba antes de activarlo:** mismas versiones
+  del núcleo y de los módulos, mismas redes conectadas en los dos (cada LAN y
+  cada WAN cableada a ambos, p. ej. a través de un switch) y un enlace entre
+  ellos para la sincronización (dedicado recomendado, o una LAN).
+- **Emparejado:** en el activo se genera un código de emparejamiento; se
+  pega en el panel del otro. A partir de ahí se hablan por TLS con
+  certificado mutuo.
+- **IP virtual por red** con VRRP (`keepalived`): los equipos de la LAN usan
+  como puerta de enlace una IP compartida que siempre tiene el activo. En
+  las WAN con IP fija se comparte la IP pública; en las WAN por DHCP o PPPoE
+  el de espera tiene la WAN levantada pero sin usar y la activa al tomar el
+  control (se puede clonar la MAC para que el proveedor dé la misma IP).
+- **Qué se sincroniza:** toda la configuración de netctl (núcleo y módulos)
+  del activo al de espera, al aplicar cada cambio; el estado de las
+  conexiones del firewall (`conntrackd`), para que las conexiones abiertas
+  sigan vivas tras el cambio; y las concesiones DHCP, para que el de espera
+  no reparta IPs repetidas. Las claves de WireGuard son las mismas en los
+  dos, así que los clientes VPN reconectan solos.
+- **Servicios en el de espera:** DHCP, WireGuard y las reglas de reenvío
+  quedan preparados pero parados (o sin IP virtual) hasta tomar el control.
+- **Panel:** tarjeta «Alta disponibilidad» con el estado de los dos (activo,
+  en espera, sin conexión), última sincronización, historial de cambios de
+  papel y botón «Pasar el control al otro» para mantenimiento. El panel del
+  de espera solo muestra el estado y avisa de que se configura desde el
+  activo.
+- **Protección contra «cerebro dividido»:** si se pierde el enlace de
+  sincronización pero los dos siguen vivos, el de espera comprueba también
+  por las LAN antes de tomar el control; si no puede asegurarse, avisa y no
+  lo toma.
+- **Actualizar sin cortes:** se actualiza primero el de espera, se le pasa
+  el control y luego se actualiza el otro.
+- **Tests:** generación de la config de keepalived/conntrackd, máquina de
+  estados del papel (activo / espera / fallo / regreso), comprobaciones
+  previas y formato de la sincronización. La prueba real con dos VMs la hace
+  el usuario, con una guía paso a paso.
 
 ## 10. Fases
 
-Módulos instalables: WireGuard, Firewall, Router, DHCP, Seguridad y Alta
-disponibilidad. Funciones del núcleo (no son módulos): Equipos/Topología,
-Directorio, BPA y selector de equipos.
+1. **Fase 1:** workspace, `wg-modelo` extraído, núcleo (login, carcasa, kit,
+   gestor de módulos, catálogo firmado), herramientas de publicación, módulo
+   WireGuard completo.
+2. **Fase 2:** módulo Firewall.
+   - **Fase 2b:** VPN de configuración cero «netctl VPN» y sus apps (§8b).
+   - **Fase 2c:** páginas Equipos y Topología del núcleo (§7.7). Salen con
+     lo que haya (vecinos de la red + clientes VPN) y cada módulo posterior
+     les añade su parte (DHCP nombres, Router tráfico, HA la pareja).
+   - **Fase 2d:** unión a Active Directory / OpenLDAP (§7.8). netctl VPN y
+     el Firewall funcionan sin ella; al llegar, les añade usuarios y grupos
+     del directorio.
+   - **Fase 2e:** analizador de buenas prácticas (§7.9) con las
+     comprobaciones de todo lo hecho hasta ahí (núcleo, WireGuard, Firewall,
+     netctl VPN, Equipos y Directorio). A partir de aquí, cada fase incluye
+     las comprobaciones BPA de su módulo como parte de «terminado».
+3. **Fase 3:** módulo Router.
+   - **Fase 3b:** módulo DHCP (§9e). Puede ir antes del Router si se
+     prefiere, porque no depende de él.
+4. **Fase 4:** módulo Seguridad.
+5. **Fase 5:** módulo Alta disponibilidad / shadow mode (§9f). Va al final
+   porque tiene que sincronizar la config de todos los módulos anteriores.
 
-| Fase | Qué |
-|---|---|
-| 1 | Workspace, `wg-modelo`, núcleo, publicación y módulo WireGuard (**hecha**, núcleo y WireGuard 0.1.3) |
-| 2 | Firewall con reenvío de puertos (§9, §9b) |
-| 2b | netctl VPN de configuración cero (§8b) |
-| 2c | Equipos y Topología (§7.7) |
-| 2d | Directorio AD/LDAP (§7.8) |
-| 2e | BPA (§7.9) |
-| 3 | Router (§9c) |
-| 3b | DHCP (§9e) |
-| 4 | Seguridad (§9d) |
-| 5 | Alta disponibilidad (§9f) |
-
-Cada fase tiene su propio plan, con su lista de comprobación de opciones.
+Cada fase tiene su propio plan; las fases 3, 4 y 5 se detallan al llegar a
+ellas.
 
 Las pruebas reales en Debian, openSUSE y Rocky las hace **el usuario**. Quien
 lo construya entrega tests automáticos (unitarios: generación de reglas
