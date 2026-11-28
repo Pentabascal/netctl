@@ -7,9 +7,10 @@
   import { aplicado, textoError, redesDe } from './estado.svelte.js';
   import { deRegla, aRegla, nuevaRegla, opcionesOrigen, opcionesDestino, DIAS } from './politica.js';
   import { ordenarZonas } from './listaPoliticas.js';
+  import { tiposDisponibles } from './tabla.js';
 
   /** regla: null = nueva (en la pareja origen→destino). */
-  let { api, config, regla = null, origen = 'interna', destino = 'externa', oncerrar } = $props();
+  let { api, config, regla = null, origen = 'interna', destino = 'externa', ontipo = null, oncerrar } = $props();
 
   const c = $derived(config.config);
   const redes = $derived(redesDe(c));
@@ -134,6 +135,11 @@
 {/snippet}
 
 <PanelLateral abierto titulo={regla ? regla.nombre : 'Crear política'} {oncerrar}>
+  {#if !regla && ontipo}
+    <Bloque titulo="Tipo" ayuda="Firewall deja pasar o corta tráfico; NAT cambia direcciones; Reenvío de puertos abre un servicio de tu red a internet.">
+      <Radios valor="firewall" opciones={tiposDisponibles(config.una_interfaz)} onchange={(v) => v !== 'firewall' && ontipo(v)} />
+    </Bloque>
+  {/if}
   <Bloque>
     <Campo etiqueta="Nombre" bind:valor={f.nombre} placeholder="Por ejemplo: Cámaras sin internet" ayuda="Para reconocerla en la lista." enfocar={!regla} />
   </Bloque>

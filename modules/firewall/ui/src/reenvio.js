@@ -33,6 +33,7 @@ export function formNuevo() {
     caduca: 'nunca',
     caducaActual: null,
     wan: '',
+    wanIp: '',
     loopback: true,
     log: false,
     activo: true,
@@ -53,6 +54,7 @@ export function deReenvio(r) {
     caduca: r.caduca ? 'mantener' : 'nunca',
     caducaActual: r.caduca ?? null,
     wan: r.wan ?? '',
+    wanIp: r.wan_ip ?? '',
     loopback: r.loopback,
     log: r.log,
     activo: r.activo,
@@ -87,6 +89,7 @@ export function aReenvio(f, nombreServicio = '', ahora = Date.now() / 1000) {
     externo,
     interno,
     wan: f.wan || null,
+    wan_ip: f.wanIp || null,
     desde: f.soloAlgunas ? f.desde : [],
     caduca,
     loopback: f.loopback,
@@ -94,4 +97,18 @@ export function aReenvio(f, nombreServicio = '', ahora = Date.now() / 1000) {
     log: f.log,
     plantilla: f.plantilla || null,
   };
+}
+
+const textoRangos = (l) => l.map((x) => (x.desde === x.hasta ? `${x.desde}` : `${x.desde}-${x.hasta}`)).join(', ');
+
+/** Puertos como en UniFi: «Puerto WAN» (uno, lista o rango) y «Puerto de destino» (vacío = el mismo). */
+export function puertosUnifi(r) {
+  return { wanPuertos: textoRangos(r.externo), destinoPuerto: r.interno != null ? String(r.interno) : '' };
+}
+
+/** Vuelve a `puertos`/`fuera` del formulario de siempre desde los campos de UniFi. */
+export function dePuertosUnifi(wanPuertos, destinoPuerto) {
+  const unico = puertoUnico(wanPuertos);
+  if (unico != null && destinoPuerto.trim() && Number(destinoPuerto) !== unico) return { puertos: destinoPuerto.trim(), fuera: String(unico) };
+  return { puertos: wanPuertos, fuera: '' };
 }

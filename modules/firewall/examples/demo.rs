@@ -125,7 +125,12 @@ fn config(ifaces: &[Iface], una: bool) -> Config {
     viejo.activo = false;
     viejo.plantilla = Some("ssh".into());
     c.reenvios = vec![web, mc, juegos, rdp, cam, viejo];
-    c.sig_id = 12;
+    c.nat_propio = vec![ReglaNat {
+        id: 13, nombre: "Oficina sale por la IP 2".into(), tipo: TipoNat::Snat { ip: "198.51.100.20".parse().unwrap() },
+        iface: Some("enp1s0".into()), origen: Direccion::Ip { red: "192.168.1.0/28".parse().unwrap() }, destino: Direccion::Cualquiera,
+        protocolo: Protocolo::Cualquiera, puertos: Puertos::Cualquiera, activa: true, descripcion: String::new(),
+    }];
+    c.sig_id = 13;
     c
 }
 

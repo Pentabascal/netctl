@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aReenvio, deReenvio, formNuevo, puertoUnico } from './reenvio.js';
+import { aReenvio, deReenvio, formNuevo, puertoUnico, puertosUnifi, dePuertosUnifi } from './reenvio.js';
 
 const nas = { tipo: 'equipo', mac: 'aa:bb:cc:dd:ee:01', ip: '192.168.1.20', nombre: 'NAS' };
 
@@ -40,4 +40,18 @@ test('caducidad y desde', () => {
 test('equipo escrito a mano: nombre con la IP', () => {
   const r = aReenvio({ ...formNuevo(), equipo: { tipo: 'ip', red: '192.168.1.50/32' }, puertos: '25565' }, 'Minecraft');
   assert.equal(r.nombre, '192.168.1.50 · Minecraft');
+});
+
+test('puertos al modo UniFi: WAN y destino', () => {
+  const r = aReenvio({ ...formNuevo(), equipo: nas, ...dePuertosUnifi('2222', '22'), wanIp: '203.0.113.7' });
+  assert.deepEqual(r.externo, [{ desde: 2222, hasta: 2222 }]);
+  assert.equal(r.interno, 22);
+  assert.equal(r.wan_ip, '203.0.113.7');
+  assert.deepEqual(puertosUnifi(r), { wanPuertos: '2222', destinoPuerto: '22' });
+  assert.equal(deReenvio({ ...r, id: 1 }).wanIp, '203.0.113.7');
+  const g = aReenvio({ ...formNuevo(), equipo: nas, ...dePuertosUnifi('27015-27030', '') });
+  assert.deepEqual(g.externo, [{ desde: 27015, hasta: 27030 }]);
+  assert.equal(g.interno, null);
+  assert.equal(g.wan_ip, null);
+  assert.deepEqual(dePuertosUnifi('80', '80'), { puertos: '80', fuera: '' });
 });

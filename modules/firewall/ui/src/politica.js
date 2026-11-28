@@ -29,13 +29,13 @@ export function nuevaRegla(origen, destino) {
   };
 }
 
-function dePuertos(p) {
+export function dePuertos(p) {
   if (p?.tipo === 'lista') return { modo: 'concreto', texto: textoRangos(p.valor), grupo: null };
   if (p?.tipo === 'grupo') return { modo: 'lista', texto: '', grupo: p.valor };
   return { modo: 'cualquiera', texto: '', grupo: null };
 }
 
-function aPuertos(p) {
+export function aPuertos(p) {
   if (p.modo === 'concreto') {
     const r = leerPuertos(p.texto);
     return r.ok ? { tipo: 'lista', valor: r.valor } : { tipo: 'lista', valor: [] };
@@ -44,7 +44,7 @@ function aPuertos(p) {
   return { tipo: 'cualquiera' };
 }
 
-function deDir(d, lado) {
+export function deDir(d, lado) {
   const t = d?.tipo ?? 'cualquiera';
   const vacio = { tipo: 'cualquiera', dir: null, red: '', mac: '' };
   if (t === 'cualquiera') return vacio;
@@ -54,7 +54,7 @@ function deDir(d, lado) {
   return { ...vacio, tipo: 'ip', dir: d };
 }
 
-function aDir(x) {
+export function aDir(x) {
   if (x.tipo === 'red') return { tipo: 'interfaz', iface: x.red };
   if (x.tipo === 'mac') return { tipo: 'mac', mac: x.mac.trim().toLowerCase() };
   if ((x.tipo === 'equipo' || x.tipo === 'ip') && x.dir) return x.dir;
