@@ -2,7 +2,7 @@
   // Firewall › Zonas, como en UniFi: esquema plegable, tabla de zonas, matriz que filtra y la lista
   // de políticas debajo. Con una sola tarjeta de red se ve «Qué puede entrar a esta máquina».
   import { onMount } from 'svelte';
-  import { Matriz, PanelLateral } from '@netctl/kit';
+  import { Matriz } from '@netctl/kit';
   import { fw } from './estado.svelte.js';
   import { ordenarZonas } from './listaPoliticas.js';
   import EsquemaZonas from './EsquemaZonas.svelte';
@@ -12,7 +12,7 @@
   import PanelAjustes from './PanelAjustes.svelte';
   import ListaPoliticas from './ListaPoliticas.svelte';
   import SoloEntrada from './SoloEntrada.svelte';
-  import FormRegla from './FormRegla.svelte';
+  import FormPolitica from './FormPolitica.svelte';
 
   let { api, config } = $props();
 
@@ -91,9 +91,7 @@
 {:else if panel?.tipo === 'ajustes'}
   <PanelAjustes {api} {config} oncerrar={() => (panel = null)} />
 {:else if panel?.tipo === 'politica'}
-  <PanelLateral abierto titulo={panel.regla ? panel.regla.nombre : 'Crear política'} oncerrar={() => (panel = null)}>
-    <FormRegla {api} {config} origen={panel.origen} destino={panel.destino} regla={panel.regla} onhecho={() => (panel = null)} />
-  </PanelLateral>
+  <FormPolitica {api} {config} origen={panel.origen} destino={panel.destino} regla={panel.regla} oncerrar={() => (panel = null)} />
 {/if}
 
 <style>
