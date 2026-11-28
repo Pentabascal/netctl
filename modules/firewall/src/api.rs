@@ -419,6 +419,7 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/reglas/{id}", put(editar_regla).delete(borrar_regla))
         .route("/reglas/{id}/duplicar", post(duplicar_regla))
         .route("/politicas", get(politicas))
+        .route("/tabla", get(tabla))
         .route("/zonas", post(crear_zona))
         .route("/zonas/{id}", put(editar_zona).delete(borrar_zona))
         .route("/reenvios", get(reenvios).post(crear_reenvio))
@@ -758,6 +759,113 @@ async fn politicas(State(e): E) -> R {
         "propias": propias,
     }))
     .into_response())
+}
+
+fn texto_proto(p: Protocolo, n: u8) -> String {
+    match p {
+        Protocolo::Cualquiera => "Cualquiera".into(),
+        Protocolo::Tcp => "TCP".into(),
+        Protocolo::Udp => "UDP".into(),
+        Protocolo::TcpUdp => "TCP/UDP".into(),
+        Protocolo::Icmp => "ICMP".into(),
+        Protocolo::Otro => format!("Otro ({n})"),
+    }
+}
+
+/// Tabla de políticas: reglas propias, NAT propio, reenvíos y, al final, las de serie
+/// agrupadas como en `/politicas`. Todas con las mismas columnas.
+async fn tabla(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    let nombre = |z: &str| c.zona(z).map(|z| z.nombre.clone()).unwrap_or_else(|| z.to_string());
+    let mut filas = vec![];
+    for r in &c.reglas {
+        let accion = match r.accion {
+            Accion::Permitir => "Permitir",
+            Accion::Bloquear => "Bloquear",
+            Accion::Rechazar => "Rechazar",
+        };
+        filas.push(json!({
+            "tipo": "firewall", "id": r.id, "nombre": r.nombre, "accion": accion,
+            "protocolo": texto_proto(r.protocolo, r.numero_protocolo),
+            "zona_origen": nombre(&r.origen_zona), "zona_destino": nombre(&r.destino_zona),
+            "origen": texto_dir(&c, &r.origen), "destino": texto_dir(&c, &r.destino),
+            "puerto_destino": texto_puertos(&c, &r.puertos), "interfaz": Value::Null,
+            "activa": r.activa, "de_serie": false,
+        }));
+    }
+    for n in &c.nat_propio {
+        let (accion, destino) = match &n.tipo {
+            TipoNat::Masquerade => ("Masquerade", texto_dir(&c, &n.destino)),
+            TipoNat::Snat { .. } => ("SNAT", texto_dir(&c, &n.destino)),
+            TipoNat::Dnat { ip, puerto } => {
+                let a = match puerto {
+                    Some(p) => format!("{ip}:{p}"),
+                    None => ip.to_string(),
+                };
+                ("DNAT", format!("{} → {a}", texto_dir(&c, &n.destino)))
+            }
+        };
+        filas.push(json!({
+            "tipo": "nat", "id": n.id, "nombre": n.nombre, "accion": accion,
+            "protocolo": texto_proto(n.protocolo, 0), "zona_origen": Value::Null, "zona_destino": Value::Null,
+            "origen": texto_dir(&c, &n.origen), "destino": destino,
+            "puerto_destino": texto_puertos(&c, &n.puertos), "interfaz": n.iface,
+            "activa": n.activa, "de_serie": false,
+        }));
+    }
+    let ahora = e.sistema.ahora();
+    let wan = e.ips_wan(&c);
+    let externa = c.zonas_tipo(TipoZona::Externa).first().map(|z| nombre(z));
+    {
+        let v = e.vivo.lock().unwrap();
+        for r in &c.reenvios {
+            let vista = vista_reenvio(&c, r, &v, ahora, &wan);
+            let mut puertos = texto_puertos(&c, &Puertos::Lista(r.externo.clone()));
+            if let Some(i) = r.interno {
+                puertos = format!("{puertos} → {i}");
+            }
+            let origen = if r.desde.is_empty() {
+                "Cualquiera".to_string()
+            } else {
+                r.desde.iter().map(|d| texto_dir(&c, d)).collect::<Vec<_>>().join(", ")
+            };
+            let interfaz = match (&r.wan, r.wan_ip) {
+                (Some(w), Some(ip)) => Some(format!("{w} · {ip}")),
+                (Some(w), None) => Some(w.clone()),
+                (None, Some(ip)) => Some(ip.to_string()),
+                (None, None) => None,
+            };
+            filas.push(json!({
+                "tipo": "reenvio", "id": r.id, "nombre": r.nombre, "accion": "Reenviar",
+                "protocolo": texto_proto(r.protocolo, 0), "zona_origen": externa, "zona_destino": Value::Null,
+                "origen": origen, "destino": texto_dir(&c, &r.equipo), "puerto_destino": puertos,
+                "interfaz": interfaz, "activa": r.activo, "de_serie": false,
+                "estado": vista["estado"], "caduca_en": vista["caduca_en"], "avisos": vista["avisos"],
+                "como_conectarse": vista["como_conectarse"],
+            }));
+        }
+    }
+    let (mut permitir, mut bloquear) = (vec![], vec![]);
+    for o in &c.zonas {
+        for d in &c.zonas {
+            if o.tipo == TipoZona::Gateway && d.tipo == TipoZona::Gateway {
+                continue;
+            }
+            let par = json!({ "origen": o.id, "destino": d.id });
+            if c.politica(&o.id, &d.id) == Politica::Permitir { permitir.push(par) } else { bloquear.push(par) }
+        }
+    }
+    for (id, n, accion, parejas) in [("serie_permitir", "Permitir todo", "Permitir", permitir), ("serie_bloquear", "Bloquear todo", "Bloquear", bloquear)] {
+        if parejas.is_empty() {
+            continue;
+        }
+        filas.push(json!({
+            "tipo": "firewall", "id": id, "nombre": n, "accion": accion, "protocolo": "Cualquiera",
+            "zona_origen": Value::Null, "zona_destino": Value::Null, "origen": "Cualquiera", "destino": "Cualquiera",
+            "puerto_destino": "Cualquiera", "interfaz": Value::Null, "activa": true, "de_serie": true, "parejas": parejas,
+        }));
+    }
+    Ok(Json(Value::Array(filas)).into_response())
 }
 
 async fn duplicar_regla(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<ConRevision>) -> R {

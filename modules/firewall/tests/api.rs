@@ -552,3 +552,39 @@ async fn config_ips_externas_con_iface() {
     let (_, v) = pedir(&p, "GET", "/config", None).await;
     assert_eq!(v["ips_externas"], json!([{"iface": "eth0", "ip": "203.0.113.4", "dinamica": false}]));
 }
+
+#[tokio::test]
+async fn tabla_junta_los_tres_tipos() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir", "protocolo": "tcp",
+        "puertos": {"tipo": "lista", "valor": [{"desde": 80, "hasta": 80}]}});
+    pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let nat = json!({"nombre": "Salida fija", "tipo": {"tipo": "snat", "ip": "203.0.113.4"}, "iface": "eth0"});
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({"nat": nat, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    pedir(&p, "POST", "/reenvios", Some(json!({"reenvio": reenvio_json(25565), "revision": revision(&p).await}))).await;
+    let (st, v) = pedir(&p, "GET", "/tabla", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let filas = v.as_array().unwrap();
+    let tipos: std::collections::BTreeSet<&str> = filas.iter().map(|f| f["tipo"].as_str().unwrap()).collect();
+    assert_eq!(tipos, ["firewall", "nat", "reenvio"].into_iter().collect());
+    let ids: Vec<String> = filas.iter().map(|f| f["id"].to_string()).collect();
+    let unicos: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(ids.len(), unicos.len(), "ids repetidos: {ids:?}");
+    let web = filas.iter().find(|f| f["nombre"] == "Web").unwrap();
+    assert_eq!(web["accion"], "Permitir");
+    assert_eq!(web["protocolo"], "TCP");
+    assert_eq!(web["puerto_destino"], "80");
+    assert_eq!(web["zona_origen"], "Externa (internet)");
+    assert_eq!(web["de_serie"], false);
+    let nat = filas.iter().find(|f| f["tipo"] == "nat").unwrap();
+    assert_eq!(nat["accion"], "SNAT");
+    assert_eq!(nat["interfaz"], "eth0");
+    let r = filas.iter().find(|f| f["tipo"] == "reenvio").unwrap();
+    assert_eq!(r["accion"], "Reenviar");
+    assert_eq!(r["puerto_destino"], "25565");
+    assert_eq!(r["activa"], true);
+    let serie: Vec<&Value> = filas.iter().filter(|f| f["de_serie"] == true).collect();
+    assert_eq!(serie.len(), 2, "de serie agrupadas: {v}");
+    assert!(serie.iter().all(|f| f["parejas"].as_array().is_some_and(|x| !x.is_empty())));
+}
