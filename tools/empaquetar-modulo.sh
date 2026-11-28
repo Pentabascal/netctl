@@ -46,4 +46,4 @@ TAR="$DIST/netctl-mod-$ID-$VER-x86_64.tar.gz"
 (cd "$TMP" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
     -czf "$TAR" manifest.toml bin ui) || fallo "no se pudo crear el tar"
 firmar "$TAR" "netctl-mod-$ID $VER"
-echo "Listo: $TAR ($(du -h "$TAR" | cut -f1)) y $(basename "$TAR").minisig"
+echo "Listo: $TAR ($(du -h "$TAR" | cut -f1))$([ -f "$TAR.minisig" ] && echo " y $(basename "$TAR").minisig")"

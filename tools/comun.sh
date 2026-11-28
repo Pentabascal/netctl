@@ -4,6 +4,7 @@
 #   NETCTL_CLAVE    clave privada de firma (por defecto ~/.minisign/netctl.key)
 #   NETCTL_URL_BASE URL base de las Releases (por defecto la de GitHub)
 #   DRY_RUN=1       publicar.sh solo muestra las órdenes de gh
+#   SIN_FIRMA=1     no firma (paquetes de prueba)
 
 RAIZ=$(cd "$(dirname "$0")/.." && pwd)
 DIST="$RAIZ/dist"
@@ -44,6 +45,12 @@ compilar_web() {
 
 # firmar <fichero> [comentario de confianza] → <fichero>.minisig
 firmar() {
+    # SIN_FIRMA=1: paquetes de prueba para instalar a mano (tools/probar-en-servidor.sh).
+    if [ "${SIN_FIRMA:-}" = 1 ]; then
+        rm -f "$1.minisig"
+        echo "Aviso: $1 sin firmar (SIN_FIRMA=1); no sirve para publicar" >&2
+        return 0
+    fi
     [ -f "$NETCTL_CLAVE" ] || fallo "no existe la clave privada $NETCTL_CLAVE (ver docs/prueba-fase1.md)"
     rm -f "$1.minisig"
     "$MINISIGN" -S -s "$NETCTL_CLAVE" -m "$1" -t "${2:-netctl $(basename "$1")}" ||

@@ -9,6 +9,30 @@ use libloading::{Library, Symbol};
 use crate::{Clasificador, comprobar_version};
 
 const NOMBRES: [&str; 4] = ["libndpi.so.6", "libndpi.so.5", "libndpi.so.4", "libndpi.so"];
+/// Las distros ponen la versión en el nombre de distintas formas (Debian: `libndpi.so.4.2`).
+const CARPETAS: [&str; 5] = ["/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib", "/usr/local/lib", "/usr/local/lib64"];
+
+/// Ficheros `libndpi.so*` que hay en las carpetas de librerías, el de versión más alta primero.
+pub fn candidatas() -> Vec<String> {
+    let mut v: Vec<String> = NOMBRES.iter().map(|x| x.to_string()).collect();
+    let mut halladas: Vec<std::path::PathBuf> = CARPETAS
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("libndpi.so")))
+        .collect();
+    halladas.sort_by_key(|p| std::cmp::Reverse(version_de(p)));
+    v.extend(halladas.into_iter().map(|p| p.to_string_lossy().into_owned()));
+    v
+}
+
+/// Números tras `.so.` para ordenar: `libndpi.so.4.14.0` → [4, 14, 0].
+fn version_de(p: &std::path::Path) -> Vec<u32> {
+    let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    n.split(".so").nth(1).unwrap_or("").split('.').filter_map(|x| x.parse().ok()).collect()
+}
 pub const SIN_LIBRERIA: &str = "No está instalada la librería nDPI (paquete libndpi).";
 
 /// `ndpi_protocol` cambia de tamaño entre versiones, pero siempre empieza por
@@ -75,7 +99,7 @@ impl Ndpi {
     /// Carga la librería, comprueba la versión y prepara el módulo de detección. El `Err` es
     /// el motivo que se enseña al usuario.
     pub fn cargar() -> Result<Ndpi, String> {
-        let lib = NOMBRES.iter().find_map(|n| unsafe { Library::new(n) }.ok()).ok_or(SIN_LIBRERIA)?;
+        let lib = candidatas().iter().find_map(|n| unsafe { Library::new(n) }.ok()).ok_or(SIN_LIBRERIA)?;
         unsafe {
             let revision: FnRevision = sim(&lib, b"ndpi_revision\0")?;
             let version = texto(revision());
@@ -153,5 +177,15 @@ impl Drop for Ndpi {
             self.olvidar(f);
         }
         unsafe { (self.salir)(self.modulo) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ordena_por_version() {
+        let mut v = vec!["/a/libndpi.so.4.2", "/a/libndpi.so.4.14.0", "/a/libndpi.so.5", "/a/libndpi.so"];
+        v.sort_by_key(|p| std::cmp::Reverse(super::version_de(std::path::Path::new(p))));
+        assert_eq!(v, vec!["/a/libndpi.so.5", "/a/libndpi.so.4.14.0", "/a/libndpi.so.4.2", "/a/libndpi.so"]);
     }
 }
