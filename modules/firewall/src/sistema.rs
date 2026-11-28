@@ -10,6 +10,11 @@ pub trait Sistema: Send + Sync {
     /// Ejecuta `programa args…` (con `entrada` por stdin si la hay) y devuelve su salida.
     fn ejecutar(&self, programa: &str, args: &[&str], entrada: Option<&str>) -> Result<String, String>;
 
+    /// ¿Responde `ip:puerto` por TCP? (estado «no responde» de los reenvíos)
+    fn conectar(&self, ip: std::net::IpAddr, puerto: u16) -> bool {
+        std::net::TcpStream::connect_timeout(&(ip, puerto).into(), std::time::Duration::from_secs(2)).is_ok()
+    }
+
     /// Instante UNIX actual (segundos).
     fn ahora(&self) -> u64 {
         std::time::SystemTime::now()
@@ -49,6 +54,8 @@ pub struct Falso {
     pub llamadas: Mutex<Vec<(String, Option<String>)>>,
     pub respuestas: Mutex<Vec<(String, Result<String, String>)>>,
     pub reloj: Mutex<u64>,
+    /// Puertos (ip:puerto) que responden a `conectar`.
+    pub abiertos: Mutex<Vec<String>>,
 }
 
 impl Falso {
@@ -86,6 +93,9 @@ impl Sistema for Falso {
     }
     fn ahora(&self) -> u64 {
         *self.reloj.lock().unwrap()
+    }
+    fn conectar(&self, ip: std::net::IpAddr, puerto: u16) -> bool {
+        self.abiertos.lock().unwrap().contains(&format!("{ip}:{puerto}"))
     }
 }
 

@@ -111,6 +111,37 @@ pub fn parse_sshd(salida: &str) -> u16 {
         .unwrap_or(22)
 }
 
+/// Contadores de `nft -j list table inet netctl`, sumados por comentario corto: `f7`, `r5`
+/// (reenvíos y reglas: hasta el primer `_`) o el comentario entero (`p_externa_gateway`…).
+pub fn parse_contadores(json: &str) -> std::collections::BTreeMap<String, (u64, u64)> {
+    let mut m = std::collections::BTreeMap::new();
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return m };
+    for item in v.get("nftables").and_then(|x| x.as_array()).into_iter().flatten() {
+        let Some(regla) = item.get("rule") else { continue };
+        let Some(com) = regla.get("comment").and_then(|c| c.as_str()) else { continue };
+        let clave = match com.split_once('_') {
+            Some((p, _))
+                if p.len() > 1
+                    && (p.starts_with('f') || p.starts_with('r'))
+                    && p[1..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                p.to_string()
+            }
+            _ => com.to_string(),
+        };
+        for e in regla.get("expr").and_then(|x| x.as_array()).into_iter().flatten() {
+            if let Some(c) = e.get("counter") {
+                let p = c.get("packets").and_then(|x| x.as_u64()).unwrap_or(0);
+                let b = c.get("bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+                let x = m.entry(clave.clone()).or_insert((0, 0));
+                x.0 += p;
+                x.1 += b;
+            }
+        }
+    }
+    m
+}
+
 pub fn interfaces(s: &dyn Sistema) -> Vec<Iface> {
     s.ejecutar("ip", &["-j", "addr"], None).map(|j| parse_ip_addr(&j)).unwrap_or_default()
 }

@@ -2,6 +2,7 @@
 //! todo en la tabla nftables `inet netctl`. La lógica (modelo → texto nft) es pura y se prueba
 //! sin root; lo que toca el sistema pasa por [`sistema::Sistema`].
 
+pub mod api;
 pub mod aplicar;
 pub mod estado;
 pub mod leer;

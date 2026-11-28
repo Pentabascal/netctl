@@ -73,6 +73,7 @@ impl Aplicador {
             None => None,
         };
         let sistema = self.sistema.clone();
+        let rutas = self.rutas.clone();
         let almacen = self.almacen.clone();
         let registro = self.registro.clone();
         let en_espera = self.en_espera.clone();
@@ -83,7 +84,11 @@ impl Aplicador {
         let restaurar = move || {
             let r = match &restaurar_script {
                 Some(t) => sistema.ejecutar("nft", &["-f", "-"], Some(t)).map(|_| ()),
-                None => sistema.ejecutar("nft", &["delete", "table", "inet", "netctl"], None).map(|_| ()),
+                // Nunca se confirmó nada: se vuelve al firewall de antes (o a ninguno).
+                None => {
+                    restaurar_anterior(&*sistema, &rutas);
+                    Ok(())
+                }
             };
             almacen.borrar_pendiente();
             let mut e = en_espera.lock().unwrap();
@@ -157,6 +162,17 @@ pub fn traducir_nft(e: &str) -> String {
     format!("El sistema no aceptó las reglas del firewall y no se ha cambiado nada. Detalle técnico (nft): {e}")
 }
 
+/// Otro firewall activo en la máquina (se desactivará al configurar este).
+pub fn otro_firewall(s: &dyn Sistema) -> Option<&'static str> {
+    if s.ejecutar("systemctl", &["is-active", "firewalld"], None).is_ok_and(|o| o.trim() == "active") {
+        Some("firewalld")
+    } else if s.ejecutar("ufw", &["status"], None).is_ok_and(|o| o.contains("Status: active")) {
+        Some("ufw")
+    } else {
+        None
+    }
+}
+
 /// Al instalar: si firewalld o ufw están activos, guarda su estado y los desactiva. Devuelve
 /// mensajes para el registro.
 pub fn traspaso_inicial(s: &dyn Sistema, r: &Rutas) -> Vec<String> {
@@ -200,14 +216,18 @@ pub fn traspaso_inicial(s: &dyn Sistema, r: &Rutas) -> Vec<String> {
 /// Al desinstalar con «restaurar»: quita la tabla y vuelve a activar lo que había.
 pub fn restaurar_anterior(s: &dyn Sistema, r: &Rutas) -> Vec<String> {
     quitar_tabla(s);
-    let servicio = std::fs::read_to_string(r.datos.join("anterior/servicio")).unwrap_or_default();
+    let ruta_servicio = r.datos.join("anterior/servicio");
+    let servicio = std::fs::read_to_string(&ruta_servicio).unwrap_or_default();
     let r = match servicio.trim() {
         "firewalld" => s.ejecutar("systemctl", &["enable", "--now", "firewalld"], None).map(|_| "firewalld"),
         "ufw" => s.ejecutar("ufw", &["--force", "enable"], None).map(|_| "ufw"),
         _ => return vec!["No había otro firewall guardado: la máquina queda sin reglas de firewall.".into()],
     };
     match r {
-        Ok(n) => vec![format!("{n} vuelve a estar activo con su configuración anterior.")],
+        Ok(n) => {
+            let _ = std::fs::remove_file(&ruta_servicio);
+            vec![format!("{n} vuelve a estar activo con su configuración anterior.")]
+        }
         Err(e) => vec![format!("No se pudo volver a activar el firewall anterior: {e}")],
     }
 }
@@ -296,6 +316,18 @@ mod tests {
         a.aplicar(&router(), &fijas(), "admin", "inicial", true).unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(s.ordenes().contains(&"nft delete table inet netctl".to_string()));
+    }
+
+    #[tokio::test]
+    async fn primer_cambio_sin_confirmar_devuelve_firewalld() {
+        let (d, s, a) = montar(50);
+        let r = Rutas::en(d.path());
+        s.responder("systemctl is-active firewalld", Ok("active\n"));
+        traspaso_inicial(&*s, &r);
+        a.aplicar(&router(), &fijas(), "admin", "asistente", true).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(s.ordenes().contains(&"systemctl enable --now firewalld".to_string()), "{:?}", s.ordenes());
+        assert!(!r.datos.join("anterior/servicio").exists(), "se puede volver a traspasar");
     }
 
     #[tokio::test]
