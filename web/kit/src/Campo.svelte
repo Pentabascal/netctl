@@ -138,7 +138,7 @@
     height: var(--alto-campo);
     padding: 0 11px;
     background: var(--campo);
-    border: 1px solid var(--borde-fuerte);
+    border: 1px solid var(--borde-campo);
     border-radius: var(--radio-pq);
     color: var(--texto);
     font: inherit;

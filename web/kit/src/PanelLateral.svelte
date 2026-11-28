@@ -10,7 +10,7 @@
     titulo = '',
     subtitulo = '',
     icono = '',
-    ancho = '440px',
+    ancho = '420px',
     oncerrar,
     cabecera,
     children,
@@ -31,7 +31,7 @@
 {#if abierto}
   <div class="velo" onclick={cerrar} aria-hidden="true"></div>
   <div class="nc-panel" style:--ancho={ancho} role="dialog" aria-modal="true" aria-label={titulo}>
-    <header>
+    <header class:centrado={!icono && !subtitulo}>
       {#if icono}<span class="icono"><Icono nombre={icono} tam={18} /></span>{/if}
       <div class="titulos">
         <h2>{titulo}</h2>
@@ -62,8 +62,8 @@
     z-index: 41;
     display: flex;
     flex-direction: column;
-    background: var(--superficie);
-    border-left: 1px solid var(--borde);
+    background: var(--fondo);
+    border-left: 1px solid var(--borde-suave);
     box-shadow: var(--sombra);
     animation: deslizar 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
@@ -86,6 +86,16 @@
   .titulos {
     flex: 1;
     min-width: 0;
+  }
+  .centrado {
+    border-bottom: 0;
+  }
+  .centrado .titulos {
+    text-align: center;
+    padding-left: 32px;
+  }
+  .centrado h2 {
+    font-size: 13px;
   }
   h2 {
     font-size: 16px;
@@ -118,10 +128,10 @@
   .cuerpo {
     flex: 1;
     overflow-y: auto;
-    padding: 18px;
+    padding: 4px 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
   footer {
     display: flex;
@@ -129,7 +139,7 @@
     justify-content: flex-end;
     padding: 14px 18px;
     border-top: 1px solid var(--borde-suave);
-    background: var(--superficie);
+    background: var(--fondo);
   }
   @keyframes deslizar {
     from {
