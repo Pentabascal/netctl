@@ -6,7 +6,7 @@ Prueba corta. Si algo sale distinto de lo que pone aquí, apunta el paso y lo qu
 
 El Firewall 0.4.0 necesita el núcleo 0.3.0: hay que publicar los dos y **reinstalar el
 núcleo** en cada servidor. Publicar el Firewall compila también el ayudante `netctl-dpi`
-en un contenedor (hace falta podman). minisign pide la contraseña de la clave.
+en un contenedor (hace falta podman). La clave de firma no tiene contraseña (`minisign -G -W`).
 
 ```sh
 PATH=~/.cargo/bin:$PATH tools/publicar.sh nucleo
