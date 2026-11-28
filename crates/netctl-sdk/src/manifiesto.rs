@@ -12,6 +12,17 @@ pub struct EntradaMenu {
     pub icono: String,
 }
 
+/// Entrada de Ajustes: las del mismo `grupo` salen juntas como pestañas con icono
+/// (UniFi: «Policy Engine»).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct EntradaAjustes {
+    pub grupo: String,
+    pub titulo: String,
+    pub ruta: String,
+    #[serde(default)]
+    pub icono: String,
+}
+
 #[derive(Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct Paquetes {
@@ -30,6 +41,9 @@ pub struct Manifiesto {
     pub icono: String,
     #[serde(default)]
     pub menu: Vec<EntradaMenu>,
+    /// Páginas que el módulo pone en Ajustes, en lugar de (o además de) su menú.
+    #[serde(default)]
+    pub ajustes: Vec<EntradaAjustes>,
     #[serde(default)]
     pub paquetes: Paquetes,
     #[serde(default)]
@@ -90,6 +104,19 @@ rhel = ["wireguard-tools", "nftables"]
         assert_eq!(m.menu[1].icono, "");
         assert_eq!(m.paquetes.suse, ["wireguard-tools", "nftables"]);
         assert_eq!(m.conflictos, ["wg-quick@wg0"]);
+    }
+
+    #[test]
+    fn ajustes_se_leen() {
+        let m = Manifiesto::leer(&format!(
+            "{EJEMPLO}\n[[ajustes]]\ngrupo = \"Motor de políticas\"\ntitulo = \"Tabla\"\nruta = \"tabla\"\nicono = \"lista\"\n\n[[ajustes]]\ngrupo = \"Motor de políticas\"\ntitulo = \"Zonas\"\nruta = \"zonas\"\n"
+        ))
+        .unwrap();
+        assert_eq!(m.ajustes.len(), 2);
+        assert_eq!(m.ajustes[1].ruta, "zonas");
+        assert_eq!(m.ajustes[0].grupo, "Motor de políticas");
+        assert_eq!(m.ajustes[1].icono, "");
+        assert!(Manifiesto::leer(EJEMPLO).unwrap().ajustes.is_empty());
     }
 
     #[test]

@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use minisign_verify::PublicKey;
 use netctl_sdk::distro::Familia;
-use netctl_sdk::manifiesto::{EntradaMenu, Manifiesto};
+use netctl_sdk::manifiesto::{EntradaAjustes, EntradaMenu, Manifiesto};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -164,6 +164,7 @@ pub struct InfoModulo {
     pub version: semver::Version,
     pub icono: String,
     pub menu: Vec<EntradaMenuJson>,
+    pub ajustes: Vec<EntradaAjustesJson>,
     #[serde(flatten)]
     pub estado: EstadoUnidad,
 }
@@ -173,6 +174,25 @@ pub struct EntradaMenuJson {
     pub titulo: String,
     pub ruta: String,
     pub icono: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct EntradaAjustesJson {
+    pub grupo: String,
+    pub titulo: String,
+    pub ruta: String,
+    pub icono: String,
+}
+
+impl From<&EntradaAjustes> for EntradaAjustesJson {
+    fn from(e: &EntradaAjustes) -> Self {
+        Self {
+            grupo: e.grupo.clone(),
+            titulo: e.titulo.clone(),
+            ruta: e.ruta.clone(),
+            icono: e.icono.clone(),
+        }
+    }
 }
 
 impl From<&EntradaMenu> for EntradaMenuJson {
@@ -254,6 +274,7 @@ impl Gestor {
                 version: m.version.clone(),
                 icono: m.icono.clone(),
                 menu: m.menu.iter().map(Into::into).collect(),
+                ajustes: m.ajustes.iter().map(Into::into).collect(),
                 estado,
             });
         }
@@ -805,6 +826,7 @@ mod tests {
         assert_eq!(v["modulos"][0]["activo"], "active");
         assert_eq!(v["modulos"][0]["memoria"], 4096);
         assert_eq!(v["modulos"][0]["menu"][0]["ruta"], "inicio");
+        assert_eq!(v["modulos"][0]["ajustes"], serde_json::json!([]));
     }
 
     #[tokio::test]
