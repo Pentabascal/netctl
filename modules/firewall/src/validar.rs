@@ -335,6 +335,9 @@ fn errores_regla_25(c: &Config, r: &Regla) -> Vec<String> {
             }
         }
     }
+    if r.estado == EstadoConexion::Elegir(vec![]) {
+        e.push("Elige al menos un estado de conexión.".to_string());
+    }
     e.extend(errores_horario(&r.horario));
     let n = &r.nombre;
     e.into_iter().map(|x| format!("Regla «{n}»: {x}")).collect()
@@ -512,6 +515,13 @@ mod tests {
         assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Una IPv4 no casa con «Solo IPv6».".to_string()]);
         r.version_ip = VersionIp::Ambas;
         assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn estado_elegir_vacio() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.estado = EstadoConexion::Elegir(vec![]);
+        assert_eq!(errores_de(r), vec!["Regla «regla 1»: Elige al menos un estado de conexión.".to_string()]);
     }
 
     #[test]

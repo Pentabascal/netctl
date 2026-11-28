@@ -265,7 +265,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
 
     // ---- input: hacia esta máquina
     t.push_str("\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n");
-    t.push_str("\t\tiif lo accept\n");
+    t.push_str("\t\tiif lo accept\n\t\tct state invalid drop\n");
     // Panel y SSH antes que nada, para que ni las reglas que cortan conexiones abiertas los toquen.
     if f.alcance_internet {
         let _ = writeln!(t, "\t\ttcp dport {} accept comment \"fija_panel\"", f.panel);
@@ -281,14 +281,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     if !wg_ifaces.is_empty() {
         let _ = writeln!(t, "\t\tiifname {} tcp dport {} accept comment \"fija_ssh\"", lista_ifaces(&wg_ifaces), f.ssh);
     }
-    let al_gateway = |r: &&&Regla| gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona);
-    for r in reglas.iter().filter(al_gateway).filter(|r| r.corta_establecidas()) {
-        let ifs = c.ifaces_de(&r.origen_zona);
-        if !ifs.is_empty() {
-            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
-        }
-    }
-    t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n");
+    // Lo que la red necesita para funcionar, también antes de las reglas que cortan conexiones.
     t.push_str("\t\ticmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept\n");
     t.push_str("\t\ticmp type { destination-unreachable, time-exceeded, parameter-problem } accept\n");
     t.push_str("\t\tudp sport 67 udp dport 68 accept comment \"fija_dhcp\"\n");
@@ -296,17 +289,25 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     for (i, p) in &f.wg {
         let _ = writeln!(t, "\t\tudp dport {p} accept comment \"fija_wg_{}\"", nombre_seguro(i));
     }
-    if c.ping_externo || ext.is_empty() {
-        t.push_str("\t\ticmp type echo-request accept\n\t\ticmpv6 type echo-request accept\n");
-    } else {
-        let l = lista_ifaces(&ext);
-        let _ = writeln!(t, "\t\tiifname != {l} icmp type echo-request accept\n\t\tiifname != {l} icmpv6 type echo-request accept");
-    }
     // Hotspot: a esta máquina solo DHCP y DNS (UniFi).
     for (_, ifs) in zonas_con_ifaces.iter().filter(|(z, _)| z.tipo == TipoZona::Hotspot) {
         let l = lista_ifaces(ifs);
         let _ = writeln!(t, "\t\tiifname {l} udp dport {{ 53, 67, 547 }} accept comment \"fija_hotspot\"");
         let _ = writeln!(t, "\t\tiifname {l} tcp dport 53 accept comment \"fija_hotspot\"");
+    }
+    let al_gateway = |r: &&&Regla| gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona);
+    for r in reglas.iter().filter(al_gateway).filter(|r| r.corta_establecidas()) {
+        let ifs = c.ifaces_de(&r.origen_zona);
+        if !ifs.is_empty() {
+            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
+        }
+    }
+    t.push_str("\t\tct state established,related accept\n");
+    if c.ping_externo || ext.is_empty() {
+        t.push_str("\t\ticmp type echo-request accept\n\t\ticmpv6 type echo-request accept\n");
+    } else {
+        let l = lista_ifaces(&ext);
+        let _ = writeln!(t, "\t\tiifname != {l} icmp type echo-request accept\n\t\tiifname != {l} icmpv6 type echo-request accept");
     }
     for r in reglas.iter().filter(al_gateway).filter(|r| !r.corta_establecidas()) {
         let ifs = c.ifaces_de(&r.origen_zona);
@@ -645,6 +646,23 @@ mod tests {
         let regla = pos(input, "comment \"r9_");
         let est = pos(input, "ct state established,related accept");
         assert!(ssh < regla && panel < regla && regla < est, "{input}");
+    }
+
+    #[test]
+    fn establecidas_no_pasan_de_ninguna_fija() {
+        let mut c = router();
+        c.interfaces.insert("eth1".into(), "hotspot".into());
+        let mut r = regla(9, "hotspot", "gateway", Accion::Bloquear);
+        r.protocolo = Protocolo::Cualquiera;
+        r.puertos = Puertos::Cualquiera;
+        r.estado = EstadoConexion::Elegir(vec![Estado::Establecida]);
+        c.reglas.push(r);
+        let t = generado(&c);
+        let input = &t[pos(&t, "chain input")..pos(&t, "chain forward")];
+        let regla = pos(input, "comment \"r9_");
+        for fija in ["icmpv6 type { nd-neighbor-solicit", "comment \"fija_dhcp\"", "comment \"fija_dhcpv6\"", "comment \"fija_wg_wg0\"", "comment \"fija_hotspot\""] {
+            assert!(pos(input, fija) < regla, "{fija} tiene que ir antes:\n{input}");
+        }
     }
 
     #[test]
