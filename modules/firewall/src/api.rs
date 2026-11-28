@@ -336,6 +336,13 @@ struct CuerpoReenvio {
 }
 
 #[derive(Deserialize)]
+struct CuerpoNat {
+    nat: Value,
+    #[serde(default)]
+    revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
 struct CuerpoZonaNueva {
     #[serde(default)]
     nombre: String,
@@ -409,6 +416,9 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/reenvios/comprobar", post(comprobar_reenvio))
         .route("/reenvios/{id}", put(editar_reenvio).delete(borrar_reenvio))
         .route("/reenvios/{id}/{accion}", post(accion_reenvio))
+        .route("/nat", get(nat_lista).post(crear_nat))
+        .route("/nat/{id}", put(editar_nat).delete(borrar_nat))
+        .route("/nat/{id}/{accion}", post(accion_nat))
         .route("/plantillas", get(|| async { Json(plantillas::todas()) }))
         .route("/grupos", get(grupos).post(crear_grupo))
         .route("/grupos/{id}", put(editar_grupo).delete(borrar_grupo))
@@ -1015,6 +1025,65 @@ async fn comprobar_reenvio(State(e): E, Json(b): Json<CuerpoReenvio>) -> R {
         "wan_privada": wan_privada,
     }))
     .into_response())
+}
+
+async fn nat_lista(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    Ok(Json(json!({ "nat": c.nat_propio, "automatico": c.nat })).into_response())
+}
+
+async fn crear_nat(State(e): E, h: HeaderMap, Json(b): Json<CuerpoNat>) -> R {
+    let (id, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla NAT nueva", |c| {
+            let id = c.nuevo_id();
+            let n: ReglaNat = con_id(b.nat, id)?;
+            c.nat_propio.push(n);
+            Ok(id)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": id })))
+}
+
+async fn editar_nat(State(e): E, h: HeaderMap, Path(id): Path<u64>, Json(b): Json<CuerpoNat>) -> R {
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla NAT editada", |c| {
+            let n: ReglaNat = con_id(b.nat, id)?;
+            let x = c.nat_propio.iter_mut().find(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            *x = n;
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn borrar_nat(State(e): E, h: HeaderMap, Path(id): Path<u64>, Query(q): Query<ConRevision>) -> R {
+    let (_, esp, c) = e
+        .mutar(q.revision, &usuario(&h), "Regla NAT borrada", |c| {
+            let antes = c.nat_propio.len();
+            c.nat_propio.retain(|n| n.id != id);
+            if c.nat_propio.len() == antes {
+                return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE));
+            }
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn accion_nat(State(e): E, h: HeaderMap, Path((id, accion)): Path<(u64, String)>, Json(b): Json<ConRevision>) -> R {
+    let (activa, resumen) = match accion.as_str() {
+        "activar" => (true, "Regla NAT activada"),
+        "desactivar" => (false, "Regla NAT desactivada"),
+        _ => return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE)),
+    };
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), resumen, |c| {
+            let x = c.nat_propio.iter_mut().find(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            x.activa = activa;
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
 }
 
 async fn grupos(State(e): E) -> R {

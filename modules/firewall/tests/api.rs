@@ -504,3 +504,31 @@ async fn zona_en_uso_409() {
     assert_eq!(st, StatusCode::CONFLICT);
     assert_eq!(v["usos"], json!(["Cámaras fuera"]));
 }
+
+#[tokio::test]
+async fn crear_nat_202() {
+    let p = configurado().await;
+    let rev = revision(&p).await;
+    let nat = json!({ "nombre": "Web interna", "tipo": { "tipo": "dnat", "ip": "192.168.1.10", "puerto": 8080 },
+        "iface": "eth0", "protocolo": "tcp", "puertos": { "tipo": "lista", "valor": [{ "desde": 80, "hasta": 80 }] } });
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({ "nat": nat, "revision": rev }))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    assert!(v["pendiente"]["id"].is_u64());
+    let id = v["id"].as_u64().unwrap();
+    let (_, l) = pedir(&p, "GET", "/nat", None).await;
+    assert_eq!(l["nat"][0]["id"], id);
+    let rev = revision(&p).await;
+    let (st, _) = pedir(&p, "POST", &format!("/nat/{id}/desactivar"), Some(json!({ "revision": rev }))).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let (_, l) = pedir(&p, "GET", "/nat", None).await;
+    assert_eq!(l["nat"][0]["activa"], false);
+    // Un DNAT con puerto sin protocolo se rechaza con el texto del plan.
+    let rev = revision(&p).await;
+    let malo = json!({ "nombre": "x", "tipo": { "tipo": "dnat", "ip": "192.168.1.10", "puerto": 8080 } });
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({ "nat": malo, "revision": rev }))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v.to_string().contains("Para DNAT con puerto elige TCP o UDP."), "{v}");
+    let rev = revision(&p).await;
+    let (st, _) = pedir(&p, "DELETE", &format!("/nat/{id}?revision={rev}"), None).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+}

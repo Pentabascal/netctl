@@ -80,6 +80,26 @@ fn main() {
         r.horario = Horario::Diario(Franja { desde: "00:00".into(), hasta: "23:59".into() });
         c.reglas.push(r);
     }
+    if args.iter().any(|a| a == "nat") {
+        let base = |id: u64, tipo: TipoNat| ReglaNat { id, nombre: format!("nat{id}"), tipo, iface: None, origen: Direccion::Cualquiera,
+            destino: Direccion::Cualquiera, protocolo: Protocolo::Cualquiera, puertos: Puertos::Cualquiera, activa: true, descripcion: String::new() };
+        let mut n = base(20, TipoNat::Masquerade);
+        n.iface = Some("eth0".into());
+        c.nat_propio.push(n);
+        let mut n = base(21, TipoNat::Snat { ip: "203.0.113.5".parse().unwrap() });
+        n.iface = Some("eth0".into());
+        n.origen = Direccion::Grupo { id: 1 };
+        c.nat_propio.push(n);
+        let mut n = base(22, TipoNat::Dnat { ip: "192.168.1.10".parse().unwrap(), puerto: Some(8080) });
+        n.iface = Some("eth0".into());
+        n.protocolo = Protocolo::TcpUdp;
+        n.puertos = Puertos::Grupo(2);
+        c.nat_propio.push(n);
+        let mut n = base(23, TipoNat::Dnat { ip: "fd00::10".parse().unwrap(), puerto: None });
+        n.origen = Direccion::Mac { mac: "aa:bb:cc:dd:ee:01".into() };
+        n.protocolo = Protocolo::Udp;
+        c.nat_propio.push(n);
+    }
     let f = Fijas { panel: 8443, alcance_internet: false, ssh: 22, wg: vec![("wg0".into(), 51820)], ips_externas: vec!["203.0.113.4".parse().unwrap()] };
     print!("{}", nft::generar(&c, &f, 1_800_000_000).unwrap());
 }

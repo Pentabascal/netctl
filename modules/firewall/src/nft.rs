@@ -436,20 +436,89 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
             post.push_str(&l);
         }
     }
+    let (pre_propio, post_propio) = nat_propio(c);
     t.push_str("\tchain prerouting {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n");
+    t.push_str(&pre_propio);
     t.push_str(&pre);
     t.push_str("\t}\n");
     t.push_str("\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n");
+    t.push_str(&post_propio);
     t.push_str(&post);
     if !ext.is_empty() {
         for (z, ifs) in &zonas_con_ifaces {
-            if z.tipo != TipoZona::Externa && c.nat.get(&z.id).copied().unwrap_or(false) {
+            if z.tipo != TipoZona::Externa
+                && c.nat.get(&z.id).copied().unwrap_or(false)
+                && !masquerade_cubre(c, ifs, &ext)
+            {
                 let _ = writeln!(t, "\t\tiifname {} oifname {} masquerade comment \"nat_{}\"", lista_ifaces(ifs), lista_ifaces(&ext), z.id);
             }
         }
     }
     t.push_str("\t}\n}\n");
     Ok(t)
+}
+
+/// ¿Hay un Masquerade propio sin más condiciones que ya hace lo mismo que el NAT automático
+/// de la zona con tarjetas `ifs` hacia las externas `ext`?
+fn masquerade_cubre(c: &Config, ifs: &[String], ext: &[String]) -> bool {
+    c.nat_propio.iter().any(|n| {
+        n.activa
+            && n.tipo == TipoNat::Masquerade
+            && n.destino == Direccion::Cualquiera
+            && n.protocolo == Protocolo::Cualquiera
+            && n.puertos == Puertos::Cualquiera
+            && match &n.iface {
+                None => true,
+                Some(i) => ext.len() == 1 && ext[0] == *i,
+            }
+            && match &n.origen {
+                Direccion::Cualquiera => true,
+                Direccion::Interfaz { iface } => ifs.len() == 1 && ifs[0] == *iface,
+                _ => false,
+            }
+    })
+}
+
+/// Reglas NAT del usuario: (prerouting, postrouting). Van antes que reenvíos y NAT automático.
+fn nat_propio(c: &Config) -> (String, String) {
+    let (mut pre, mut post) = (String::new(), String::new());
+    for n in c.nat_propio.iter().filter(|n| n.activa) {
+        let Ok(dport) = puertos_regla(c, &n.puertos) else { continue };
+        let proto = proto_txt(n.protocolo, 0, None, dport.as_deref());
+        let (iif, accion, fam_ip) = match &n.tipo {
+            TipoNat::Masquerade => ("oifname", "masquerade".to_string(), None),
+            TipoNat::Snat { ip } => {
+                let f = if ip.is_ipv4() { "ip" } else { "ip6" };
+                ("oifname", format!("snat {f} to {ip}"), Some(ip.is_ipv4()))
+            }
+            TipoNat::Dnat { ip, puerto } => {
+                let (f, dir) = if ip.is_ipv4() { ("ip", ip.to_string()) } else { ("ip6", format!("[{ip}]")) };
+                let a = match puerto {
+                    Some(p) => format!("dnat {f} to {dir}:{p}"),
+                    None => format!("dnat {f} to {dir}"),
+                };
+                ("iifname", a, Some(ip.is_ipv4()))
+            }
+        };
+        let tarjeta = n.iface.as_ref().map(|i| format!("{iif} \"{i}\"")).unwrap_or_default();
+        let comentario = format!("comment \"n{}_{}\"", n.id, nombre_seguro(&n.nombre));
+        let destino = if iif == "iifname" { &mut pre } else { &mut post };
+        let compatible = |f: Fam| match (f, fam_ip) {
+            (Fam::Ambas, _) | (_, None) => true,
+            (Fam::V4, Some(v4)) => v4,
+            (Fam::V6, Some(v4)) => !v4,
+        };
+        for (fo, o) in dir_txt(c, &n.origen, "saddr") {
+            for (fd, d) in dir_txt(c, &n.destino, "daddr") {
+                let junta = fo == Fam::Ambas || fd == Fam::Ambas || fo == fd;
+                if !junta || !compatible(fo) || !compatible(fd) {
+                    continue;
+                }
+                linea(destino, &[&tarjeta, &o, &d, &proto, "counter", &accion, &comentario]);
+            }
+        }
+    }
+    (pre, post)
 }
 
 #[cfg(test)]
@@ -869,5 +938,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn snat_antes_que_masquerade_automatico() {
+        let mut c = router();
+        let mut n = nat(50, TipoNat::Snat { ip: "203.0.113.5".parse().unwrap() });
+        n.iface = Some("eth0".into());
+        n.origen = Direccion::Ip { red: "192.168.1.0/24".parse().unwrap() };
+        c.nat_propio.push(n);
+        let t = generado(&c);
+        let post = &t[pos(&t, "chain postrouting")..];
+        assert!(post.contains("oifname \"eth0\" ip saddr 192.168.1.0/24 counter snat ip to 203.0.113.5 comment \"n50_nat_50\""), "{post}");
+        assert!(pos(post, "snat ip to 203.0.113.5") < pos(post, "masquerade comment \"nat_interna\""));
+    }
+
+    #[test]
+    fn dnat_con_puerto() {
+        let mut c = router();
+        let mut n = nat(51, TipoNat::Dnat { ip: "192.168.1.10".parse().unwrap(), puerto: Some(8080) });
+        n.iface = Some("eth0".into());
+        n.protocolo = Protocolo::Tcp;
+        n.puertos = Puertos::Lista(vec![RangoPuerto::uno(80)]);
+        c.nat_propio.push(n);
+        c.reenvios.push(reenvio(9, "192.168.1.20", 3389));
+        let t = generado(&c);
+        let pre = &t[pos(&t, "chain prerouting")..pos(&t, "chain postrouting")];
+        assert!(pre.contains("iifname \"eth0\" tcp dport 80 counter dnat ip to 192.168.1.10:8080"), "{pre}");
+        assert!(pos(pre, "dnat ip to 192.168.1.10:8080") < pos(pre, "dnat ip to 192.168.1.20"));
+    }
+
+    #[test]
+    fn nat_propio_inactivo_fuera() {
+        let mut c = router();
+        let mut n = nat(52, TipoNat::Masquerade);
+        n.activa = false;
+        c.nat_propio.push(n);
+        assert!(!generado(&c).contains("n52_"));
+    }
+
+    #[test]
+    fn masquerade_no_duplica() {
+        let mut c = router();
+        let mut n = nat(53, TipoNat::Masquerade);
+        n.iface = Some("eth0".into());
+        c.nat_propio.push(n);
+        let t = generado(&c);
+        let post = &t[pos(&t, "chain postrouting")..];
+        assert!(post.contains("oifname \"eth0\" counter masquerade comment \"n53_nat_53\""), "{post}");
+        assert!(!post.contains("comment \"nat_"), "{post}");
+        // Limitado a una tarjeta de origen solo quita el automático de esa zona.
+        let mut c = router();
+        let mut n = nat(54, TipoNat::Masquerade);
+        n.iface = Some("eth0".into());
+        n.origen = Direccion::Interfaz { iface: "eth1".into() };
+        c.nat_propio.push(n);
+        let t = generado(&c);
+        let post = &t[pos(&t, "chain postrouting")..];
+        assert!(!post.contains("nat_interna"), "{post}");
+        assert!(post.contains("nat_vpn"), "{post}");
     }
 }

@@ -282,6 +282,45 @@ pub struct Reenvio {
     pub plantilla: Option<String>,
 }
 
+/// Qué hace una regla NAT propia.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "tipo", rename_all = "snake_case")]
+pub enum TipoNat {
+    /// Cambia el origen por la IP de la tarjeta de salida.
+    Masquerade,
+    /// Cambia el origen por una IP fija.
+    Snat { ip: IpAddr },
+    /// Cambia el destino por otra IP (y puerto, si se pone).
+    Dnat {
+        ip: IpAddr,
+        #[serde(default)]
+        puerto: Option<u16>,
+    },
+}
+
+/// Regla NAT escrita por el usuario. Va antes que el NAT automático por zona y los reenvíos.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReglaNat {
+    pub id: u64,
+    pub nombre: String,
+    pub tipo: TipoNat,
+    /// Tarjeta de salida (Masquerade y SNAT) o de entrada (DNAT). `None` = cualquiera.
+    #[serde(default)]
+    pub iface: Option<String>,
+    #[serde(default)]
+    pub origen: Direccion,
+    #[serde(default)]
+    pub destino: Direccion,
+    #[serde(default)]
+    pub protocolo: Protocolo,
+    #[serde(default)]
+    pub puertos: Puertos,
+    #[serde(default = "si")]
+    pub activa: bool,
+    #[serde(default)]
+    pub descripcion: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -302,6 +341,8 @@ pub struct Config {
     /// zona de origen → enmascarar al salir por Externa
     #[serde(default)]
     pub nat: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub nat_propio: Vec<ReglaNat>,
     #[serde(default = "si")]
     pub ping_externo: bool,
     #[serde(default)]
@@ -378,6 +419,7 @@ impl Config {
             grupos_puertos: vec![],
             reenvios: vec![],
             nat,
+            nat_propio: vec![],
             ping_externo: true,
             sig_id: 0,
             direcciones: reales.iter().map(|i| (i.nombre.clone(), i.ips.clone())).collect(),

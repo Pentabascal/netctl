@@ -25,6 +25,12 @@ fn hotspot_sin_tarjetas_carga() {
     carga(&[]);
 }
 
+/// Reglas NAT propias: masquerade, SNAT con grupo de origen y DNAT a IPv4 e IPv6.
+#[test]
+fn nat_propio_carga() {
+    carga(&["nat"]);
+}
+
 fn carga(args: &[&str]) {
     let script = Command::new(env!("CARGO"))
         .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft", "--"])

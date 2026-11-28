@@ -61,3 +61,18 @@ pub fn regla(id: u64, o: &str, d: &str, accion: Accion) -> Regla {
         ..Default::default()
     }
 }
+
+pub fn nat(id: u64, tipo: TipoNat) -> ReglaNat {
+    ReglaNat {
+        id,
+        nombre: format!("nat {id}"),
+        tipo,
+        iface: None,
+        origen: Direccion::Cualquiera,
+        destino: Direccion::Cualquiera,
+        protocolo: Protocolo::Cualquiera,
+        puertos: Puertos::Cualquiera,
+        activa: true,
+        descripcion: String::new(),
+    }
+}

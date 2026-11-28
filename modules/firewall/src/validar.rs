@@ -434,6 +434,95 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     for r in c.reenvios.iter().filter(|r| r.activo) {
         e.extend(choques_reenvio(c, f, r));
     }
+    for n in &c.nat_propio {
+        e.extend(errores_nat(c, n).into_iter().map(|x| format!("NAT «{}»: {x}", n.nombre)));
+    }
+    e
+}
+
+fn proto_corto(p: Protocolo) -> &'static str {
+    if p.incluye_tcp() { "tcp" } else { "udp" }
+}
+
+/// Puertos concretos de una lista o de un grupo (vacío si es «Cualquiera» o el grupo no existe).
+pub fn rangos_de(c: &Config, p: &Puertos) -> Vec<RangoPuerto> {
+    match p {
+        Puertos::Cualquiera => vec![],
+        Puertos::Lista(l) => l.clone(),
+        Puertos::Grupo(id) => c.grupos_puertos.iter().find(|g| g.id == *id).map(|g| g.puertos.clone()).unwrap_or_default(),
+    }
+}
+
+/// Errores de una regla NAT propia (sin el nombre delante).
+pub fn errores_nat(c: &Config, n: &ReglaNat) -> Vec<String> {
+    let mut e = vec![];
+    if n.nombre.trim().is_empty() {
+        e.push("ponle un nombre.".into());
+    }
+    if let Some(i) = &n.iface
+        && !(es_iface(i) && c.interfaces.contains_key(i))
+    {
+        e.push(format!("La tarjeta «{}» ya no existe: elige otra o «Cualquiera».", crate::nombre_seguro(i)));
+    }
+    for d in [&n.origen, &n.destino] {
+        if let Err(x) = validar_dir(c, d) {
+            e.push(x);
+        }
+    }
+    if matches!(n.destino, Direccion::Mac { .. }) {
+        e.push("La MAC solo sirve como origen.".into());
+    }
+    if !n.protocolo.usa_puertos() && n.puertos != Puertos::Cualquiera {
+        e.push("Tiene puertos, pero el protocolo elegido no usa puertos: elige TCP, UDP o los dos.".into());
+    }
+    match &n.puertos {
+        Puertos::Lista(l) if l.is_empty() || l.iter().any(|x| !rango_valido(x)) => {
+            e.push("Tiene puertos no válidos: usa números del 1 al 65535.".into())
+        }
+        Puertos::Grupo(id) if !c.grupos_puertos.iter().any(|g| g.id == *id) => {
+            e.push("Usa un grupo de puertos que ya no existe.".into())
+        }
+        _ => {}
+    }
+    let ip_nueva = match &n.tipo {
+        TipoNat::Masquerade => None,
+        TipoNat::Snat { ip } => Some(*ip),
+        TipoNat::Dnat { ip, puerto } => {
+            if puerto.is_some() && !n.protocolo.usa_puertos() {
+                e.push("Para DNAT con puerto elige TCP o UDP.".into());
+            }
+            if *puerto == Some(0) {
+                e.push("El puerto nuevo tiene que estar entre 1 y 65535.".into());
+            }
+            Some(*ip)
+        }
+    };
+    let fam = [familia(c, &n.origen), familia(c, &n.destino)];
+    if let (Some(a), Some(b)) = (fam[0], fam[1])
+        && a != b
+    {
+        e.push("Mezcla IPv4 e IPv6 en origen y destino: usa el mismo tipo en los dos.".into());
+    }
+    if let Some(ip) = ip_nueva
+        && fam.iter().flatten().any(|f| *f != ip.is_ipv4())
+    {
+        e.push(format!("La IP {ip} y el origen o destino mezclan IPv4 e IPv6: usa el mismo tipo."));
+    }
+    if n.activa
+        && matches!(n.tipo, TipoNat::Dnat { .. })
+        && n.protocolo.usa_puertos()
+    {
+        'fuera: for rango in rangos_de(c, &n.puertos) {
+            for o in c.reenvios.iter().filter(|o| o.activo && solapan(o.protocolo, n.protocolo)) {
+                if let Some(x) = o.externo.iter().find(|x| x.solapa(&rango)) {
+                    let p = rango.desde.max(x.desde);
+                    let pr = if n.protocolo.incluye_tcp() && o.protocolo.incluye_tcp() { "tcp" } else { proto_corto(o.protocolo) };
+                    e.push(format!("Ya hay un reenvío («{}») en el puerto {p}/{pr}.", o.nombre));
+                    break 'fuera;
+                }
+            }
+        }
+    }
     e
 }
 
@@ -669,5 +758,41 @@ mod tests {
         r.origen = Direccion::Equipo { mac: "zz".into(), ip: "192.168.1.5".parse().unwrap(), nombre: "x".into() };
         c.reglas.push(r);
         assert!(!validar(&c, &fijas()).is_empty());
+    }
+
+    #[test]
+    fn dnat_choca_con_reenvio() {
+        let mut c = router();
+        c.reenvios.push(reenvio(9, "192.168.1.20", 25565));
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.protocolo = Protocolo::TcpUdp;
+        n.puertos = Puertos::Lista(vec![RangoPuerto { desde: 25560, hasta: 25570 }]);
+        c.nat_propio.push(n.clone());
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("Ya hay un reenvío («r9») en el puerto 25565/tcp.")), "{e:?}");
+        c.reenvios[0].activo = false;
+        assert!(validar(&c, &fijas()).is_empty());
+    }
+
+    #[test]
+    fn dnat_puerto_pide_tcp_o_udp() {
+        let mut c = router();
+        c.nat_propio.push(nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: Some(80) }));
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("Para DNAT con puerto elige TCP o UDP.")), "{e:?}");
+    }
+
+    #[test]
+    fn nat_errores_basicos() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Snat { ip: "2001:db8::1".parse().unwrap() });
+        n.iface = Some("eth9".into());
+        n.origen = Direccion::Ip { red: "192.168.1.0/24".parse().unwrap() };
+        n.puertos = Puertos::Lista(vec![RangoPuerto::uno(80)]);
+        c.nat_propio.push(n);
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("eth9")), "{e:?}");
+        assert!(e.iter().any(|x| x.contains("IPv4 e IPv6")), "{e:?}");
+        assert!(e.iter().any(|x| x.contains("no usa puertos")), "{e:?}");
     }
 }
