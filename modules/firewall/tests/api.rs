@@ -412,3 +412,95 @@ async fn equipos_usan_nombres_conocidos() {
     assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:01").unwrap()["nombre"], "PC Ana");
     assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:02").unwrap()["nombre"], "");
 }
+
+// ---- fase 2.5: página Zonas al estilo UniFi
+
+#[tokio::test]
+async fn politicas_agrupa_las_de_serie() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir", "protocolo": "tcp",
+        "puertos": {"tipo": "lista", "valor": [{"desde": 80, "hasta": 80}]}});
+    pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let (st, v) = pedir(&p, "GET", "/politicas", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let grupos = v["de_serie"].as_array().unwrap();
+    assert_eq!(grupos.len(), 2, "Permitir todo y Bloquear todo: {v}");
+    let total: usize = grupos.iter().map(|g| g["parejas"].as_array().unwrap().len()).sum();
+    assert_eq!(total, 6 * 6 - 1);
+    assert_eq!(grupos[0]["nombre"], "Permitir todo");
+    let propia = &v["propias"][0];
+    assert_eq!(propia["nombre"], "Web");
+    assert_eq!(propia["zona_origen_nombre"], "Externa (internet)");
+    assert_eq!(propia["zona_destino_nombre"], "Esta máquina");
+    assert_eq!(propia["texto_origen"], "Cualquiera");
+    assert_eq!(propia["texto_puertos"], "80");
+    assert_eq!(propia["texto_puertos_origen"], "Cualquiera");
+    // la matriz trae las reglas propias por pareja y los avisos
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert!(v["avisos"].as_array().unwrap().is_empty());
+    assert_eq!(v["tarjetas_de_zona"]["interna"], json!(["eth1"]));
+}
+
+#[tokio::test]
+async fn duplicar_regla() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir"});
+    let (_, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let id = v["id"].as_u64().unwrap();
+    let (st, v) = pedir(&p, "POST", &format!("/reglas/{id}/duplicar"), Some(json!({"revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/reglas", None).await;
+    let r = v["reglas"].as_array().unwrap();
+    assert_eq!(r.len(), 2);
+    assert_eq!(r[1]["nombre"], "Web (copia)");
+    assert_eq!(r[1]["activa"], false);
+    assert_ne!(r[1]["id"], r[0]["id"]);
+}
+
+#[tokio::test]
+async fn crear_zona_con_tarjetas() {
+    let p = configurado().await;
+    let (st, v) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": "Cámaras", "tarjetas": ["eth1"], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert_eq!(v["config"]["interfaces"]["eth1"], json!(id));
+    let z = v["config"]["zonas"].as_array().unwrap().iter().find(|z| z["id"] == json!(id)).unwrap().clone();
+    assert_eq!(z["tipo"], "personalizada");
+    assert_eq!(z["nombre"], "Cámaras");
+    // renombrar y quitar la tarjeta (vuelve a… ninguna zona: la tarjeta queda sin zona)
+    let (st, v) = pedir(&p, "PUT", &format!("/zonas/{id}"), Some(json!({"nombre": "CCTV", "tarjetas": [], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert!(v["config"]["interfaces"].get("eth1").is_none());
+    // nombre vacío
+    let (st, _) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": " ", "tarjetas": [], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn zona_de_serie_no_se_borra() {
+    let p = configurado().await;
+    let (st, _) = pedir(&p, "DELETE", &format!("/zonas/dmz?revision={}", revision(&p).await), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    // en las de serie solo cambian las tarjetas, no el nombre
+    let (st, _) = pedir(&p, "PUT", "/zonas/dmz", Some(json!({"nombre": "Otra", "tarjetas": ["eth1"], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    let z = v["config"]["zonas"].as_array().unwrap().iter().find(|z| z["id"] == "dmz").unwrap().clone();
+    assert_eq!(z["nombre"], "DMZ");
+    assert_eq!(v["config"]["interfaces"]["eth1"], "dmz");
+}
+
+#[tokio::test]
+async fn zona_en_uso_409() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": "Cámaras", "tarjetas": [], "revision": revision(&p).await}))).await;
+    let id = v["id"].as_str().unwrap().to_string();
+    let regla = json!({"nombre": "Cámaras fuera", "origen_zona": id, "destino_zona": "externa", "accion": "bloquear"});
+    let (st, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (st, v) = pedir(&p, "DELETE", &format!("/zonas/{id}?revision={}", revision(&p).await), None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert_eq!(v["usos"], json!(["Cámaras fuera"]));
+}

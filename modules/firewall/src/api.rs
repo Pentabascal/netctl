@@ -336,6 +336,15 @@ struct CuerpoReenvio {
 }
 
 #[derive(Deserialize)]
+struct CuerpoZonaNueva {
+    #[serde(default)]
+    nombre: String,
+    #[serde(default)]
+    tarjetas: Vec<String>,
+    revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
 struct CuerpoGrupo {
     #[serde(default)]
     tipo: String,
@@ -392,6 +401,10 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/reglas", get(reglas).post(crear_regla))
         .route("/reglas/orden", post(ordenar_reglas))
         .route("/reglas/{id}", put(editar_regla).delete(borrar_regla))
+        .route("/reglas/{id}/duplicar", post(duplicar_regla))
+        .route("/politicas", get(politicas))
+        .route("/zonas", post(crear_zona))
+        .route("/zonas/{id}", put(editar_zona).delete(borrar_zona))
         .route("/reenvios", get(reenvios).post(crear_reenvio))
         .route("/reenvios/comprobar", post(comprobar_reenvio))
         .route("/reenvios/{id}", put(editar_reenvio).delete(borrar_reenvio))
@@ -568,6 +581,8 @@ async fn ver_config(State(e): E) -> R {
                 "pendiente": e.pendiente_json(),
                 "una_interfaz": c.una_interfaz(),
                 "ips_externas": leer::ips_externas(&c),
+                "avisos": nft::avisos(&c, e.sistema.ahora()),
+                "tarjetas_de_zona": c.zonas.iter().map(|z| (z.id.clone(), c.ifaces_de(&z.id))).collect::<std::collections::BTreeMap<_, _>>(),
             }))
             .into_response()
         }
@@ -646,6 +661,170 @@ async fn poner_politica(State(e): E, h: HeaderMap, Path((o, d)): Path<(String, S
             if b.politica != de_serie {
                 c.politicas.push(PoliticaPar { origen: o.clone(), destino: d.clone(), politica: b.politica });
             }
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+/// Texto corto de una dirección (como `textoDireccion` del kit).
+fn texto_dir(c: &Config, d: &Direccion) -> String {
+    match d {
+        Direccion::Cualquiera => "Cualquiera".into(),
+        Direccion::Equipo { ip, nombre, .. } if !nombre.is_empty() => format!("{nombre} · {ip}"),
+        Direccion::Equipo { ip, .. } => ip.to_string(),
+        Direccion::Ip { red } if red.prefix_len() == red.max_prefix_len() => red.addr().to_string(),
+        Direccion::Ip { red } => red.to_string(),
+        Direccion::Rango { desde, hasta } => format!("{desde} – {hasta}"),
+        Direccion::Grupo { id } => {
+            let n = c.grupos_ip.iter().find(|g| g.id == *id).map(|g| g.nombre.clone()).unwrap_or_else(|| id.to_string());
+            format!("Grupo «{n}»")
+        }
+        Direccion::Interfaz { iface } => format!("Tarjeta {iface}"),
+        Direccion::Mac { mac } => format!("MAC {mac}"),
+    }
+}
+
+fn texto_puertos(c: &Config, p: &Puertos) -> String {
+    match p {
+        Puertos::Cualquiera => "Cualquiera".into(),
+        Puertos::Lista(l) => l
+            .iter()
+            .map(|r| if r.desde == r.hasta { r.desde.to_string() } else { format!("{}-{}", r.desde, r.hasta) })
+            .collect::<Vec<_>>()
+            .join(", "),
+        Puertos::Grupo(id) => {
+            let n = c.grupos_puertos.iter().find(|g| g.id == *id).map(|g| g.nombre.clone()).unwrap_or_else(|| id.to_string());
+            format!("Grupo «{n}»")
+        }
+    }
+}
+
+/// Lista de políticas de la página Zonas: las de serie agrupadas por acción y las propias con
+/// sus textos para las columnas.
+async fn politicas(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    let (mut permitir, mut bloquear) = (vec![], vec![]);
+    for o in &c.zonas {
+        for d in &c.zonas {
+            if o.tipo == TipoZona::Gateway && d.tipo == TipoZona::Gateway {
+                continue;
+            }
+            let par = json!({ "origen": o.id, "destino": d.id });
+            if c.politica(&o.id, &d.id) == Politica::Permitir { permitir.push(par) } else { bloquear.push(par) }
+        }
+    }
+    let nombre = |z: &str| c.zona(z).map(|z| z.nombre.clone()).unwrap_or_else(|| z.to_string());
+    let propias: Vec<Value> = c
+        .reglas
+        .iter()
+        .map(|r| {
+            let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("zona_origen_nombre".into(), json!(nombre(&r.origen_zona)));
+                o.insert("zona_destino_nombre".into(), json!(nombre(&r.destino_zona)));
+                o.insert("texto_origen".into(), json!(texto_dir(&c, &r.origen)));
+                o.insert("texto_destino".into(), json!(texto_dir(&c, &r.destino)));
+                o.insert("texto_puertos".into(), json!(texto_puertos(&c, &r.puertos)));
+                o.insert("texto_puertos_origen".into(), json!(texto_puertos(&c, &r.puertos_origen)));
+            }
+            v
+        })
+        .collect();
+    Ok(Json(json!({
+        "de_serie": [
+            { "nombre": "Permitir todo", "accion": "permitir", "parejas": permitir },
+            { "nombre": "Bloquear todo", "accion": "bloquear", "parejas": bloquear },
+        ],
+        "propias": propias,
+    }))
+    .into_response())
+}
+
+async fn duplicar_regla(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<ConRevision>) -> R {
+    let id: u64 = id.parse().map_err(|_| Fallo::error(StatusCode::FORBIDDEN, FIJA))?;
+    let (nuevo, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla duplicada", |c| {
+            let pos = c.reglas.iter().position(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            let mut r = c.reglas[pos].clone();
+            r.id = c.nuevo_id();
+            r.nombre = format!("{} (copia)", r.nombre);
+            r.activa = false;
+            let nuevo = r.id;
+            c.reglas.insert(pos + 1, r);
+            Ok(nuevo)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": nuevo })))
+}
+
+fn poner_tarjetas(c: &mut Config, zona: &str, tarjetas: &[String]) -> Result<(), Fallo> {
+    if let Some(i) = tarjetas.iter().find(|i| !validar::es_iface(i)) {
+        return Err(Fallo::errores(vec![format!("«{}» no es un nombre de tarjeta válido.", crate::nombre_seguro(i))]));
+    }
+    c.interfaces.retain(|i, z| z != zona || tarjetas.contains(i));
+    for i in tarjetas {
+        c.interfaces.insert(i.clone(), zona.to_string());
+    }
+    Ok(())
+}
+
+fn nombre_zona(n: &str) -> Result<String, Fallo> {
+    let n = n.trim();
+    if n.is_empty() {
+        return Err(Fallo::errores(vec!["Ponle un nombre a la zona, por ejemplo «Cámaras».".into()]));
+    }
+    Ok(n.to_string())
+}
+
+async fn crear_zona(State(e): E, h: HeaderMap, Json(b): Json<CuerpoZonaNueva>) -> R {
+    let nombre = nombre_zona(&b.nombre)?;
+    let (id, esp, c) = e
+        .mutar(b.revision, &usuario(&h), &format!("Zona nueva «{nombre}»"), |c| {
+            let id = format!("z{}", c.nuevo_id());
+            c.zonas.push(Zona { id: id.clone(), nombre: nombre.clone(), tipo: TipoZona::Personalizada });
+            poner_tarjetas(c, &id, &b.tarjetas)?;
+            Ok(id)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": id })))
+}
+
+async fn editar_zona(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<CuerpoZonaNueva>) -> R {
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), &format!("Zona «{id}» cambiada"), |c| {
+            let z = c.zonas.iter_mut().find(|z| z.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            if z.tipo == TipoZona::Personalizada {
+                z.nombre = nombre_zona(&b.nombre)?;
+            }
+            poner_tarjetas(c, &id, &b.tarjetas)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn borrar_zona(State(e): E, h: HeaderMap, Path(id): Path<String>, Query(q): Query<ConRevision>) -> R {
+    let c0 = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    match c0.zona(&id) {
+        None => return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE)),
+        Some(z) if z.tipo != TipoZona::Personalizada => {
+            return Err(Fallo::error(StatusCode::FORBIDDEN, "Las zonas de serie no se pueden borrar; solo puedes cambiar sus tarjetas."));
+        }
+        _ => {}
+    }
+    let (_, esp, c) = e
+        .mutar(q.revision, &usuario(&h), &format!("Zona «{id}» borrada"), |c| {
+            let usos: Vec<String> = c.reglas.iter().filter(|r| r.origen_zona == id || r.destino_zona == id).map(|r| r.nombre.clone()).collect();
+            if !usos.is_empty() {
+                return Err(Fallo(
+                    StatusCode::CONFLICT,
+                    json!({ "error": "Esta zona se usa en otras reglas: bórralas o cámbialas antes.", "usos": usos }),
+                ));
+            }
+            c.zonas.retain(|z| z.id != id);
+            c.interfaces.retain(|_, z| *z != id);
+            c.politicas.retain(|p| p.origen != id && p.destino != id);
+            c.nat.remove(&id);
             Ok(())
         })
         .await?;
