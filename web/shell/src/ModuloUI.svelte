@@ -4,7 +4,7 @@
   import { sesion } from './sesion.svelte.js';
   import { navegar } from './ruta.svelte.js';
 
-  let { id, sub = '' } = $props();
+  let { id, sub = '', base = '' } = $props();
   let el = $state();
   let error = $state('');
   let cargando = $state(true);
@@ -26,7 +26,7 @@
         desmontar = m.mount(el, api, {
           modulo: id,
           ruta,
-          navegar: (r) => navegar(`/modulo/${id}${r ? '/' + String(r).replace(/^\/+/, '') : ''}`),
+          navegar: (r) => navegar(`${base || `/modulo/${id}`}${r ? '/' + String(r).replace(/^\/+/, '') : ''}`),
         });
       })
       .catch((e) => {

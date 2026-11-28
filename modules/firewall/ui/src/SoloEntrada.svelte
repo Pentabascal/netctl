@@ -5,7 +5,7 @@
   import { Boton, Aviso, Icono, Interruptor, PanelLateral, Asistente, SelectorEquipo, textoDireccion } from '@netctl/kit';
   import { aplicado, textoError, textoPuertos, textoProto, redesDe } from './estado.svelte.js';
   import ElegirServicio from './ElegirServicio.svelte';
-  import FormRegla from './FormRegla.svelte';
+  import FormPolitica from './FormPolitica.svelte';
 
   let { api, config } = $props();
 
@@ -97,7 +97,7 @@
   }
 
   const esPrivada = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip);
-  const ipPrivada = $derived((config.ips_externas ?? []).find(esPrivada) ?? '');
+  const ipPrivada = $derived((config.ips_externas ?? []).map((x) => x.ip).find(esPrivada) ?? '');
   const delicado = $derived(!soloAlgunas && elegida?.delicado);
 </script>
 
@@ -172,9 +172,7 @@
 </PanelLateral>
 
 {#if editar}
-  <PanelLateral abierto titulo={editar.nombre} subtitulo="Externa → Esta máquina" icono="cortafuegos" ancho="520px" oncerrar={() => (editar = null)}>
-    <FormRegla {api} {config} origen={externa} destino={gateway} regla={editar} onhecho={() => (editar = null)} />
-  </PanelLateral>
+  <FormPolitica {api} {config} origen={externa} destino={gateway} regla={editar} oncerrar={() => (editar = null)} />
 {/if}
 
 <style>

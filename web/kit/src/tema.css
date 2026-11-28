@@ -1,30 +1,33 @@
-/* Tema oscuro de netctl, estilo UniFi Network.
+/* Tema oscuro de netctl, copiado de UniFi Network 10.5 (spec 2026-11-28-firewall-unifi §2).
    Colores tomados de apps/wg-configurador/src/ui_kit.rs para que el panel y la app de
    escritorio se vean igual. Los módulos usan solo estas variables. */
 
 :root {
-  --fondo: #141619;
-  --fondo-lateral: #0f1114;
-  --superficie: #1d2024;
-  --superficie-2: #23272c;
-  --campo: #16181c;
+  --fondo: #131416;
+  --fondo-lateral: #131416;
+  --superficie: #1c1e21;
+  --superficie-2: #242629;
+  --campo: #242629;
   --hover: #262a30;
   --borde: #2e3238;
   --borde-suave: #25292e;
   --borde-fuerte: #464c54;
   --codigo: #101215;
+  --cabecera: #282b2f;
+  --borde-campo: transparent;
 
   --texto: #e4e7eb;
   --texto-2: #8c94a0;
   --texto-3: #626a75;
 
-  --azul: #4096ff;
+  --azul: #4797ff;
   --azul-hover: #5aa5ff;
   --azul-tinte: #162e52;
+  --enlace: #418ae8;
   --verde: #46cd7d;
-  --verde-tinte: #143624;
+  --verde-tinte: #123f20;
   --rojo: #ff5f64;
-  --rojo-tinte: #481a1e;
+  --rojo-tinte: #4a1a1d;
   --ambar: #f5b041;
   --ambar-tinte: #47361a;
   --morado: #af91ff;
@@ -33,9 +36,10 @@
   --radio: 8px;
   --radio-pq: 6px;
   --sombra: 0 8px 28px rgba(0, 0, 0, 0.45);
-  --alto-campo: 34px;
+  --alto-campo: 32px;
   --ancho-lateral: 64px;
   --alto-cabecera: 56px;
+  --alto-fila: 32px;
 
   --fuente: 'Inter', 'Lato', -apple-system, 'Segoe UI', 'Noto Sans', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
@@ -58,14 +62,14 @@ body {
   background: var(--fondo);
   color: var(--texto);
   font-family: var(--fuente);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
 }
 
 a {
-  color: var(--azul);
+  color: var(--enlace);
   text-decoration: none;
 }
 a:hover {

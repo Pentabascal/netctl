@@ -54,7 +54,7 @@
     align-items: center;
     gap: 12px;
     padding: 0 20px 0 28px;
-    background: color-mix(in srgb, var(--fondo) 88%, transparent);
+    background: var(--cabecera);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--borde-suave);
   }

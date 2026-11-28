@@ -103,9 +103,15 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
     {
         e.push(format!("La interfaz «{w}» no está en la zona Externa: elige otra o «Todas»."));
     }
+    if r.wan_ip.is_some_and(|ip| !ip.is_ipv4()) {
+        e.push("La IP WAN tiene que ser IPv4 (los reenvíos de puertos son solo para IPv4).".into());
+    }
     for d in &r.desde {
         if let Err(x) = validar_dir(c, d) {
             e.push(x);
+        }
+        if matches!(d, Direccion::Dominio { .. } | Direccion::Pais { .. } | Direccion::App { .. }) {
+            e.push("En «Solo desde estas IPs» no se pueden usar dominios ni países.".into());
         }
     }
     for rango in &r.externo {
@@ -129,6 +135,12 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
                 ));
             }
         }
+        for n in c.nat_propio.iter().filter(|n| n.activa && matches!(n.tipo, TipoNat::Dnat { .. }) && solapan(n.protocolo, r.protocolo)) {
+            if let Some(x) = rangos_de(c, &n.puertos).iter().find(|x| x.solapa(rango)) {
+                let comun = rango.desde.max(x.desde);
+                e.push(format!("El puerto {comun} ya lo usa la regla NAT «{}». Elige otro puerto de fuera.", n.nombre));
+            }
+        }
     }
     e
 }
@@ -139,9 +151,45 @@ pub fn siguiente_libre(c: &Config, f: &Fijas, proto: Protocolo, desde: u16, igno
     (desde.max(1)..=u16::MAX).find(|p| !ocupado(c, f, proto, *p, ignorar))
 }
 
-/// Avisos (no impiden guardar): servicio delicado abierto a todos, destino en VPN/Gateway.
-pub fn avisos_reenvio(c: &Config, r: &Reenvio) -> Vec<String> {
+/// Otro reenvío o DNAT activo que usa algún puerto de `r`: `(id, nombre)`.
+pub fn choca_con<'a>(c: &'a Config, r: &Reenvio) -> Option<(u64, &'a str)> {
+    let solapa = |l: &[RangoPuerto]| r.externo.iter().any(|a| l.iter().any(|b| a.solapa(b)));
+    if let Some(o) = c.reenvios.iter().find(|o| o.activo && o.id != r.id && solapan(o.protocolo, r.protocolo) && solapa(&o.externo)) {
+        return Some((o.id, &o.nombre));
+    }
+    c.nat_propio
+        .iter()
+        .find(|n| n.activa && matches!(n.tipo, TipoNat::Dnat { .. }) && solapan(n.protocolo, r.protocolo) && solapa(&rangos_de(c, &n.puertos)))
+        .map(|n| (n.id, n.nombre.as_str()))
+}
+
+fn es_cgnat(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (64..128).contains(&o[1])
+}
+
+/// Avisos (no impiden guardar): servicio delicado abierto a todos, destino en VPN/Gateway, y
+/// lo que se sabe de la WAN (`ips_wan`: tarjeta, IP, dinámica) que impide llegar desde fuera.
+pub fn avisos_reenvio(c: &Config, r: &Reenvio, ips_wan: &[(String, IpAddr, bool)]) -> Vec<String> {
     let mut a = vec![];
+    if let Some(ip) = r.wan_ip
+        && !ips_wan.iter().any(|(_, x, _)| *x == ip)
+    {
+        a.push(format!("La IP WAN {ip} ya no está en la máquina: el reenvío no funciona hasta que vuelva o elijas «Todas»."));
+    }
+    for (iface, ip, dinamica) in ips_wan {
+        if r.wan.as_ref().is_some_and(|w| w != iface) || r.wan_ip.is_some_and(|x| x != *ip) {
+            continue;
+        }
+        let IpAddr::V4(v4) = ip else { continue };
+        if es_cgnat(*v4) {
+            a.push(format!("{iface} está detrás de CGNAT ({ip}): tu proveedor tiene que abrir el puerto."));
+        } else if v4.is_private() {
+            a.push(format!("{iface} está detrás de otro router (IP privada {ip}). Abre también el mismo puerto en ese router."));
+        } else if *dinamica {
+            a.push(format!("{iface} tiene una IP que puede cambiar. Usa un DNS dinámico para llegar por nombre."));
+        }
+    }
     let mut puertos = r.externo.clone();
     if let Some(i) = r.interno {
         puertos.push(RangoPuerto::uno(i));
@@ -191,7 +239,7 @@ pub fn usos_grupo(c: &Config, id: u64) -> Vec<String> {
 /// Familia de una dirección: Some(true)=IPv4, Some(false)=IPv6, None=las dos o cualquiera.
 fn familia(c: &Config, d: &Direccion) -> Option<bool> {
     match d {
-        Direccion::Cualquiera => None,
+        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } | Direccion::Pais { .. } | Direccion::App { .. } => None,
         Direccion::Equipo { ip, .. } => Some(ip.is_ipv4()),
         Direccion::Ip { red } => Some(red.addr().is_ipv4()),
         Direccion::Rango { desde, .. } => Some(desde.is_ipv4()),
@@ -236,7 +284,146 @@ pub fn validar_dir(c: &Config, d: &Direccion) -> Result<(), String> {
                 Err("Se usa un grupo de IPs que ya no existe: elige otro.".into())
             }
         }
+        Direccion::Interfaz { iface } => {
+            if es_iface(iface) && c.interfaces.contains_key(iface) {
+                Ok(())
+            } else {
+                Err(format!("La tarjeta «{}» ya no existe: elige otra.", crate::nombre_seguro(iface)))
+            }
+        }
+        Direccion::Mac { mac } => {
+            if es_mac(mac) {
+                Ok(())
+            } else {
+                Err(format!("La MAC «{}» no es válida: escríbela como aa:bb:cc:dd:ee:ff.", crate::nombre_seguro(mac)))
+            }
+        }
+        Direccion::App { apps, .. } => {
+            if apps.is_empty() { Err("Elige al menos una app.".into()) } else { Ok(()) }
+        }
+        Direccion::Pais { codigos } => {
+            if codigos.is_empty() {
+                return Err("Elige al menos un país.".into());
+            }
+            match codigos.iter().find(|c| !crate::geo::es_codigo(c)) {
+                Some(c) => Err(format!("«{}» no es un código de país (dos letras, como ES).", c.chars().take(8).collect::<String>())),
+                None => Ok(()),
+            }
+        }
+        Direccion::Dominio { nombres } => {
+            if nombres.is_empty() {
+                return Err("Escribe al menos un dominio.".into());
+            }
+            match nombres.iter().find(|n| !es_dominio(n)) {
+                Some(n) => Err(format!("El dominio «{}» no es válido.", n.chars().take(80).collect::<String>())),
+                None => Ok(()),
+            }
+        }
     }
+}
+
+/// Nombre de dominio según RFC 1123: etiquetas de 1 a 63 letras, números o guiones (sin guion al
+/// principio ni al final), 253 caracteres como mucho.
+pub fn es_dominio(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 253
+        && s.split('.').all(|e| {
+            !e.is_empty()
+                && e.len() <= 63
+                && !e.starts_with('-')
+                && !e.ends_with('-')
+                && e.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+}
+
+/// Hora `HH:MM` de 00:00 a 23:59.
+pub fn es_hora(h: &str) -> bool {
+    let b = h.as_bytes();
+    b.len() == 5
+        && b[2] == b':'
+        && h[..2].parse::<u8>().is_ok_and(|x| x < 24 && b[0].is_ascii_digit() && b[1].is_ascii_digit())
+        && h[3..].parse::<u8>().is_ok_and(|x| x < 60 && b[3].is_ascii_digit() && b[4].is_ascii_digit())
+}
+
+fn errores_franja(f: &Franja, e: &mut Vec<String>) {
+    for h in [&f.desde, &f.hasta] {
+        if !es_hora(h) {
+            e.push(format!("La hora «{}» no es válida: usa HH:MM, por ejemplo 08:30.", h.chars().take(12).collect::<String>()));
+        }
+    }
+}
+
+fn errores_dias(d: &[u8], e: &mut Vec<String>) {
+    if d.is_empty() {
+        e.push("Elige al menos un día.".into());
+    } else if d.iter().any(|x| *x > 6) {
+        e.push("Los días van de lunes (0) a domingo (6).".into());
+    }
+}
+
+/// Errores del horario de una regla (sin el prefijo «Regla …»).
+pub fn errores_horario(h: &Horario) -> Vec<String> {
+    let mut e = vec![];
+    match h {
+        Horario::Siempre => {}
+        Horario::Diario(f) => errores_franja(f, &mut e),
+        Horario::Semanal { dias, franja } => {
+            errores_dias(dias, &mut e);
+            errores_franja(franja, &mut e);
+        }
+        Horario::UnaVez { inicio, fin } => {
+            if fin <= inicio {
+                e.push("El fin tiene que ser después del inicio.".into());
+            }
+        }
+        Horario::AMedida(tramos) => {
+            if tramos.is_empty() {
+                e.push("Añade al menos una franja.".into());
+            }
+            for t in tramos {
+                errores_dias(&t.dias, &mut e);
+                errores_franja(&t.franja, &mut e);
+            }
+        }
+    }
+    e
+}
+
+/// Errores de lo nuevo de la fase 2.5 (red/MAC, versión IP, horario), con el prefijo de la regla.
+fn errores_regla_25(c: &Config, r: &Regla) -> Vec<String> {
+    let mut e = vec![];
+    if matches!(r.destino, Direccion::Mac { .. }) {
+        e.push("La MAC solo se puede usar como origen.".to_string());
+    }
+    for (d, zona) in [(&r.origen, &r.origen_zona), (&r.destino, &r.destino_zona)] {
+        if let Direccion::Interfaz { iface } = d
+            && c.interfaces.get(iface).is_some_and(|z| z != zona)
+        {
+            let nombre = c.zona(zona).map(|z| z.nombre.as_str()).unwrap_or(zona);
+            e.push(format!("La tarjeta {} no es de la zona {nombre}.", crate::nombre_seguro(iface)));
+        }
+    }
+    let quiere = match r.version_ip {
+        VersionIp::Ambas => None,
+        VersionIp::V4 => Some(true),
+        VersionIp::V6 => Some(false),
+    };
+    if let Some(q) = quiere {
+        for d in [&r.origen, &r.destino] {
+            if let Some(f) = familia(c, d)
+                && f != q
+            {
+                e.push(if q { "Una IPv6 no casa con «Solo IPv4».".to_string() } else { "Una IPv4 no casa con «Solo IPv6».".to_string() });
+                break;
+            }
+        }
+    }
+    if r.estado == EstadoConexion::Elegir(vec![]) {
+        e.push("Elige al menos un estado de conexión.".to_string());
+    }
+    e.extend(errores_horario(&r.horario));
+    let n = &r.nombre;
+    e.into_iter().map(|x| format!("Regla «{n}»: {x}")).collect()
 }
 
 /// Todos los errores de la configuración completa.
@@ -289,11 +476,33 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
             }
             _ => {}
         }
+        if !r.protocolo.usa_puertos() && r.puertos_origen != Puertos::Cualquiera {
+            e.push(format!("La regla «{n}» tiene puertos de origen, pero el protocolo elegido no usa puertos: elige TCP, UDP o los dos."));
+        }
+        match &r.puertos_origen {
+            Puertos::Lista(l) if l.is_empty() || l.iter().any(|x| !rango_valido(x)) => {
+                e.push(format!("La regla «{n}» tiene puertos de origen no válidos: usa números del 1 al 65535."))
+            }
+            Puertos::Grupo(id) if !c.grupos_puertos.iter().any(|g| g.id == *id) => {
+                e.push(format!("La regla «{n}» usa un grupo de puertos que ya no existe."))
+            }
+            _ => {}
+        }
         for d in [&r.origen, &r.destino] {
             if let Err(x) = validar_dir(c, d) {
                 e.push(format!("Regla «{n}»: {x}"));
             }
         }
+        if matches!(r.origen, Direccion::Dominio { .. }) {
+            e.push(format!("Regla «{n}»: el dominio solo sirve como destino."));
+        }
+        if matches!(r.origen, Direccion::App { .. })
+            || (r.es_app() && c.zona(&r.destino_zona).is_none_or(|z| z.tipo != TipoZona::Externa))
+            || (r.es_app() && c.zona(&r.origen_zona).is_some_and(|z| z.tipo == TipoZona::Gateway))
+        {
+            e.push(format!("Regla «{n}»: App solo sirve como destino hacia internet (zona Externa)."));
+        }
+        e.extend(errores_regla_25(c, r));
         if let (Some(a), Some(b)) = (familia(c, &r.origen), familia(c, &r.destino))
             && a != b
         {
@@ -302,7 +511,7 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     }
     for g in &c.grupos_ip {
         for m in &g.miembros {
-            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera) {
+            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } | Direccion::Dominio { .. } | Direccion::Pais { .. } | Direccion::App { .. }) {
                 e.push(format!("El grupo «{}» solo puede tener equipos, IPs, redes o rangos.", g.nombre));
             } else if let Err(x) = validar_dir(c, m) {
                 e.push(format!("Grupo «{}»: {x}", g.nombre));
@@ -316,6 +525,101 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     }
     for r in c.reenvios.iter().filter(|r| r.activo) {
         e.extend(choques_reenvio(c, f, r));
+    }
+    for n in &c.nat_propio {
+        e.extend(errores_nat(c, n).into_iter().map(|x| format!("NAT «{}»: {x}", n.nombre)));
+    }
+    e
+}
+
+fn proto_corto(p: Protocolo) -> &'static str {
+    if p.incluye_tcp() { "tcp" } else { "udp" }
+}
+
+/// Puertos concretos de una lista o de un grupo (vacío si es «Cualquiera» o el grupo no existe).
+pub fn rangos_de(c: &Config, p: &Puertos) -> Vec<RangoPuerto> {
+    match p {
+        Puertos::Cualquiera => vec![],
+        Puertos::Lista(l) => l.clone(),
+        Puertos::Grupo(id) => c.grupos_puertos.iter().find(|g| g.id == *id).map(|g| g.puertos.clone()).unwrap_or_default(),
+    }
+}
+
+/// Errores de una regla NAT propia (sin el nombre delante).
+pub fn errores_nat(c: &Config, n: &ReglaNat) -> Vec<String> {
+    let mut e = vec![];
+    if n.nombre.trim().is_empty() {
+        e.push("ponle un nombre.".into());
+    }
+    if let Some(i) = &n.iface
+        && !(es_iface(i) && c.interfaces.contains_key(i))
+    {
+        e.push(format!("La tarjeta «{}» ya no existe: elige otra o «Cualquiera».", crate::nombre_seguro(i)));
+    }
+    for d in [&n.origen, &n.destino] {
+        if let Err(x) = validar_dir(c, d) {
+            e.push(x);
+        }
+    }
+    if matches!(n.tipo, TipoNat::Dnat { .. }) && matches!(n.destino, Direccion::Interfaz { .. }) {
+        e.push("En DNAT el destino no puede ser una tarjeta: elige «Cualquiera» o una IP, y la tarjeta de entrada arriba.".into());
+    }
+    if [&n.origen, &n.destino].iter().any(|d| matches!(d, Direccion::Dominio { .. } | Direccion::Pais { .. } | Direccion::App { .. })) {
+        e.push("En NAT no se pueden usar dominios, países ni apps: usa una IP o una red.".into());
+    }
+    if matches!(n.destino, Direccion::Mac { .. }) {
+        e.push("La MAC solo sirve como origen.".into());
+    }
+    if !n.protocolo.usa_puertos() && n.puertos != Puertos::Cualquiera {
+        e.push("Tiene puertos, pero el protocolo elegido no usa puertos: elige TCP, UDP o los dos.".into());
+    }
+    match &n.puertos {
+        Puertos::Lista(l) if l.is_empty() || l.iter().any(|x| !rango_valido(x)) => {
+            e.push("Tiene puertos no válidos: usa números del 1 al 65535.".into())
+        }
+        Puertos::Grupo(id) if !c.grupos_puertos.iter().any(|g| g.id == *id) => {
+            e.push("Usa un grupo de puertos que ya no existe.".into())
+        }
+        _ => {}
+    }
+    let ip_nueva = match &n.tipo {
+        TipoNat::Masquerade => None,
+        TipoNat::Snat { ip } => Some(*ip),
+        TipoNat::Dnat { ip, puerto } => {
+            if puerto.is_some() && !n.protocolo.usa_puertos() {
+                e.push("Para DNAT con puerto elige TCP o UDP.".into());
+            }
+            if *puerto == Some(0) {
+                e.push("El puerto nuevo tiene que estar entre 1 y 65535.".into());
+            }
+            Some(*ip)
+        }
+    };
+    let fam = [familia(c, &n.origen), familia(c, &n.destino)];
+    if let (Some(a), Some(b)) = (fam[0], fam[1])
+        && a != b
+    {
+        e.push("Mezcla IPv4 e IPv6 en origen y destino: usa el mismo tipo en los dos.".into());
+    }
+    if let Some(ip) = ip_nueva
+        && fam.iter().flatten().any(|f| *f != ip.is_ipv4())
+    {
+        e.push(format!("La IP {ip} y el origen o destino mezclan IPv4 e IPv6: usa el mismo tipo."));
+    }
+    if n.activa
+        && matches!(n.tipo, TipoNat::Dnat { .. })
+        && n.protocolo.usa_puertos()
+    {
+        'fuera: for rango in rangos_de(c, &n.puertos) {
+            for o in c.reenvios.iter().filter(|o| o.activo && solapan(o.protocolo, n.protocolo)) {
+                if let Some(x) = o.externo.iter().find(|x| x.solapa(&rango)) {
+                    let p = rango.desde.max(x.desde);
+                    let pr = if n.protocolo.incluye_tcp() && o.protocolo.incluye_tcp() { "tcp" } else { proto_corto(o.protocolo) };
+                    e.push(format!("Ya hay un reenvío («{}») en el puerto {p}/{pr}.", o.nombre));
+                    break 'fuera;
+                }
+            }
+        }
     }
     e
 }
@@ -343,6 +647,82 @@ pub fn misma_familia(a: IpAddr, b: IpAddr) -> bool {
 mod tests {
     use super::*;
     use crate::pruebas::*;
+
+    fn errores_de(r: Regla) -> Vec<String> {
+        let mut c = router();
+        c.reglas.push(r);
+        validar(&c, &fijas())
+    }
+
+    #[test]
+    fn mac_solo_origen() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.destino = Direccion::Mac { mac: "aa:bb:cc:dd:ee:ff".into() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La MAC solo se puede usar como origen.".to_string()]);
+        r.destino = Direccion::Cualquiera;
+        r.origen = Direccion::Mac { mac: "aa:bb:cc:dd:ee:ff".into() };
+        assert!(errores_de(r.clone()).is_empty());
+        r.origen = Direccion::Mac { mac: "nada".into() };
+        assert_eq!(errores_de(r).len(), 1);
+    }
+
+    #[test]
+    fn red_de_otra_zona() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.origen = Direccion::Interfaz { iface: "eth0".into() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La tarjeta eth0 no es de la zona Interna.".to_string()]);
+        r.origen = Direccion::Interfaz { iface: "eth1".into() };
+        r.destino = Direccion::Interfaz { iface: "eth0".into() };
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn hora_invalida() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.horario = Horario::Diario(Franja { desde: "25:00".into(), hasta: "17:00".into() });
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La hora «25:00» no es válida: usa HH:MM, por ejemplo 08:30.".to_string()]);
+        r.horario = Horario::Semanal { dias: vec![], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Elige al menos un día.".to_string()]);
+        r.horario = Horario::Semanal { dias: vec![0, 7], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        assert_eq!(errores_de(r.clone()).len(), 1);
+        r.horario = Horario::UnaVez { inicio: 2000, fin: 1000 };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: El fin tiene que ser después del inicio.".to_string()]);
+        r.horario = Horario::AMedida(vec![Tramo { dias: vec![5, 6], franja: Franja { desde: "22:00".into(), hasta: "06:00".into() } }]);
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn version_ip_choca() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.version_ip = VersionIp::V4;
+        r.origen = Direccion::Ip { red: "fd00::/64".parse().unwrap() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Una IPv6 no casa con «Solo IPv4».".to_string()]);
+        r.version_ip = VersionIp::V6;
+        r.origen = Direccion::Ip { red: "192.168.1.0/24".parse().unwrap() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Una IPv4 no casa con «Solo IPv6».".to_string()]);
+        r.version_ip = VersionIp::Ambas;
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn estado_elegir_vacio() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.estado = EstadoConexion::Elegir(vec![]);
+        assert_eq!(errores_de(r), vec!["Regla «regla 1»: Elige al menos un estado de conexión.".to_string()]);
+    }
+
+    #[test]
+    fn protocolo_otro_y_puertos() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.protocolo = Protocolo::Otro;
+        r.puertos = Puertos::Cualquiera;
+        for n in [0u8, 47, 255] {
+            r.numero_protocolo = n;
+            assert!(errores_de(r.clone()).is_empty());
+        }
+        r.puertos_origen = Puertos::Lista(vec![RangoPuerto::uno(53)]);
+        assert_eq!(errores_de(r).len(), 1);
+    }
 
     #[test]
     fn puertos_texto() {
@@ -407,14 +787,14 @@ mod tests {
     #[test]
     fn avisos() {
         let c = router();
-        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.20", 3389));
+        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.20", 3389), &[]);
         assert!(a.iter().any(|x| x.contains("Escritorio remoto")), "{a:?}");
         let mut r = reenvio(1, "192.168.1.20", 3389);
         r.desde = vec![Direccion::Ip { red: "198.51.100.7/32".parse().unwrap() }];
-        assert!(avisos_reenvio(&c, &r).is_empty());
-        let a = avisos_reenvio(&c, &reenvio(1, "10.8.0.5", 80));
+        assert!(avisos_reenvio(&c, &r, &[]).is_empty());
+        let a = avisos_reenvio(&c, &reenvio(1, "10.8.0.5", 80), &[]);
         assert!(a.iter().any(|x| x.contains("VPN")), "{a:?}");
-        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.1", 80));
+        let a = avisos_reenvio(&c, &reenvio(1, "192.168.1.1", 80), &[]);
         assert!(a.iter().any(|x| x.contains("esta máquina")), "{a:?}");
     }
 
@@ -475,6 +855,150 @@ mod tests {
         let mut r = regla(1, "interna", "externa", Accion::Bloquear);
         r.origen = Direccion::Equipo { mac: "zz".into(), ip: "192.168.1.5".parse().unwrap(), nombre: "x".into() };
         c.reglas.push(r);
+        assert!(!validar(&c, &fijas()).is_empty());
+    }
+
+    #[test]
+    fn dnat_choca_con_reenvio() {
+        let mut c = router();
+        c.reenvios.push(reenvio(9, "192.168.1.20", 25565));
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.protocolo = Protocolo::TcpUdp;
+        n.puertos = Puertos::Lista(vec![RangoPuerto { desde: 25560, hasta: 25570 }]);
+        c.nat_propio.push(n.clone());
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("Ya hay un reenvío («r9») en el puerto 25565/tcp.")), "{e:?}");
+        c.reenvios[0].activo = false;
+        assert!(validar(&c, &fijas()).is_empty());
+    }
+
+    #[test]
+    fn dnat_puerto_pide_tcp_o_udp() {
+        let mut c = router();
+        c.nat_propio.push(nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: Some(80) }));
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("Para DNAT con puerto elige TCP o UDP.")), "{e:?}");
+    }
+
+    #[test]
+    fn nat_errores_basicos() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Snat { ip: "2001:db8::1".parse().unwrap() });
+        n.iface = Some("eth9".into());
+        n.origen = Direccion::Ip { red: "192.168.1.0/24".parse().unwrap() };
+        n.puertos = Puertos::Lista(vec![RangoPuerto::uno(80)]);
+        c.nat_propio.push(n);
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("eth9")), "{e:?}");
+        assert!(e.iter().any(|x| x.contains("IPv4 e IPv6")), "{e:?}");
+        assert!(e.iter().any(|x| x.contains("no usa puertos")), "{e:?}");
+    }
+
+    fn wan(ip: &str, dinamica: bool) -> Vec<(String, IpAddr, bool)> {
+        vec![("eth0".into(), ip.parse().unwrap(), dinamica)]
+    }
+
+    #[test]
+    fn aviso_ip_privada() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("192.168.0.2", false));
+        assert!(a.contains(&"eth0 está detrás de otro router (IP privada 192.168.0.2). Abre también el mismo puerto en ese router.".to_string()), "{a:?}");
+    }
+
+    #[test]
+    fn aviso_cgnat() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("100.72.1.9", false));
+        assert!(a.contains(&"eth0 está detrás de CGNAT (100.72.1.9): tu proveedor tiene que abrir el puerto.".to_string()), "{a:?}");
+    }
+
+    #[test]
+    fn aviso_dinamica() {
+        let a = avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("203.0.113.4", true));
+        assert_eq!(a, vec!["eth0 tiene una IP que puede cambiar. Usa un DNS dinámico para llegar por nombre.".to_string()]);
+        assert!(avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &wan("203.0.113.4", false)).is_empty());
+    }
+
+    #[test]
+    fn sin_ip_wan_sin_aviso() {
+        assert!(avisos_reenvio(&router(), &reenvio(1, "192.168.1.20", 25565), &[]).is_empty());
+    }
+
+    #[test]
+    fn aviso_solo_de_la_wan_elegida() {
+        let mut r = reenvio(1, "192.168.1.20", 25565);
+        r.wan_ip = Some("203.0.113.4".parse().unwrap());
+        let ips = vec![("eth0".to_string(), "203.0.113.4".parse().unwrap(), false), ("eth0".to_string(), "100.72.1.9".parse().unwrap(), true)];
+        assert!(avisos_reenvio(&router(), &r, &ips).is_empty());
+    }
+
+    #[test]
+    fn choca_al_reanudar() {
+        let mut c = router();
+        c.reenvios.push(reenvio(1, "192.168.1.20", 25565));
+        let mut r = reenvio(2, "192.168.1.21", 25565);
+        r.activo = false;
+        c.reenvios.push(r.clone());
+        assert_eq!(choca_con(&c, &r).map(|(id, n)| (id, n.to_string())), Some((1, "r1".to_string())));
+        r.externo = vec![RangoPuerto::uno(25566)];
+        assert_eq!(choca_con(&c, &r), None);
+    }
+
+    #[test]
+    fn wan_ip_v6_no() {
+        let mut c = router();
+        let mut r = reenvio(1, "192.168.1.20", 25565);
+        r.wan_ip = Some("2001:db8::1".parse().unwrap());
+        c.reenvios.push(r);
+        assert!(validar(&c, &fijas()).iter().any(|x| x.contains("IPv4")));
+    }
+
+    #[test]
+    fn dnat_destino_tarjeta_no() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.destino = Direccion::Interfaz { iface: "eth0".into() };
+        c.nat_propio.push(n);
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("En DNAT el destino no puede ser una tarjeta")), "{e:?}");
+    }
+
+    #[test]
+    fn reenvio_choca_con_dnat() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.protocolo = Protocolo::Tcp;
+        n.puertos = Puertos::Lista(vec![RangoPuerto::uno(25565)]);
+        c.nat_propio.push(n);
+        let e = choques_reenvio(&c, &fijas(), &reenvio(9, "192.168.1.20", 25565));
+        assert!(e.iter().any(|x| x.contains("la regla NAT «nat 10»")), "{e:?}");
+    }
+
+    #[test]
+    fn dominio_invalido() {
+        let mut c = router();
+        let mut r = regla(30, "interna", "externa", Accion::Bloquear);
+        r.destino = Direccion::Dominio { nombres: vec!["bien.com".into(), "mal_dominio..com".into()] };
+        c.reglas.push(r.clone());
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("El dominio «mal_dominio..com» no es válido.")), "{e:?}");
+        assert!(!e.iter().any(|x| x.contains("«bien.com»")), "{e:?}");
+        c.reglas[0].destino = Direccion::Dominio { nombres: vec![] };
+        assert!(!validar(&c, &fijas()).is_empty());
+        c.reglas[0].destino = Direccion::Cualquiera;
+        c.reglas[0].origen = Direccion::Dominio { nombres: vec!["bien.com".into()] };
+        assert!(validar(&c, &fijas()).iter().any(|x| x.contains("solo sirve como destino")));
+        assert!(es_dominio("a-b.example.org") && !es_dominio("-a.com") && !es_dominio(&"a".repeat(64)) && !es_dominio(""));
+    }
+
+    #[test]
+    fn app_solo_hacia_externa() {
+        let mut c = router();
+        let mut r = regla(32, "interna", "gateway", Accion::Bloquear);
+        r.destino = Direccion::App { apps: vec![126], nombres: vec![] };
+        c.reglas.push(r);
+        assert!(validar(&c, &fijas()).iter().any(|x| x.contains("App solo sirve")), "{:?}", validar(&c, &fijas()));
+        c.reglas[0].destino_zona = "externa".into();
+        assert!(validar(&c, &fijas()).is_empty(), "{:?}", validar(&c, &fijas()));
+        c.reglas[0].destino = Direccion::App { apps: vec![], nombres: vec![] };
         assert!(!validar(&c, &fijas()).is_empty());
     }
 }

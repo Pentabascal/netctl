@@ -46,7 +46,20 @@ struct Vivo {
     ultima: HashMap<String, u64>,
 }
 
+/// Descarga de la base de países: si está en marcha, último intento y su error.
+#[derive(Default)]
+struct EstadoGeo {
+    descargando: bool,
+    intento: u64,
+    error: Option<String>,
+}
+
 pub struct Estado {
+    /// Respuesta de `netctl-dpi apps` cuando la librería está (no cambia mientras corre).
+    apps: std::sync::Mutex<Option<Value>>,
+    geo: Arc<std::sync::Mutex<EstadoGeo>>,
+    /// IPs vistas de los destinos por dominio.
+    dominios: Arc<std::sync::Mutex<crate::dominios::Cache>>,
     pub rutas: Rutas,
     sistema: Arc<dyn Sistema>,
     ap: Aplicador,
@@ -84,6 +97,9 @@ impl Estado {
             cerrojo: tokio::sync::Mutex::new(()),
             vivo: Default::default(),
             ultimas_fijas: Default::default(),
+            dominios: Default::default(),
+            geo: Default::default(),
+            apps: Default::default(),
         }))
     }
 
@@ -147,6 +163,21 @@ impl Estado {
                 }
             }
         }
+        if let Ok(Some(c)) = self.actual() {
+            self.geo_si_toca(&c);
+        }
+        // Destinos por dominio: preguntar al DNS cada 5 min y volver a llenar los conjuntos (una
+        // recarga de la tabla, o el «deshacer» de los 60 s, los deja vacíos).
+        if let Ok(Some(c)) = self.actual() {
+            let (s2, yo) = (s.clone(), self.dominios.clone());
+            // El DNS puede tardar: se trabaja sobre una copia para no tener el cerrojo cogido.
+            let _ = tokio::task::spawn_blocking(move || {
+                let mut copia = yo.lock().unwrap().clone();
+                crate::dominios::refrescar(&c, &*s2, &mut copia);
+                *yo.lock().unwrap() = copia;
+            })
+            .await;
+        }
         // Contadores
         if let Ok(j) = s.ejecutar("nft", &["-j", "list", "table", "inet", "netctl"], None) {
             let nuevos = leer::parse_contadores(&j);
@@ -189,6 +220,11 @@ impl Estado {
         }
     }
 
+    /// IPv4 de la WAN leídas ahora mismo: `(tarjeta, ip, dinámica)`.
+    fn ips_wan(&self, c: &Config) -> Vec<(String, IpAddr, bool)> {
+        leer::ips_wan(c, &leer::interfaces(&*self.sistema))
+    }
+
     fn fijas(&self, c: &Config) -> Fijas {
         leer::fijas(&*self.sistema, &self.rutas, c)
     }
@@ -227,7 +263,45 @@ impl Estado {
             .map_err(|e| Fallo::errores(vec![e]))?
             .expect("con confirmación siempre hay espera");
         *self.ultimas_fijas.lock().unwrap() = Some(fijas);
+        crate::dominios::rellenar(nueva, &*self.sistema, &mut self.dominios.lock().unwrap());
+        self.geo_si_toca(nueva);
         Ok(e)
+    }
+
+    /// Lanza la descarga de la base de países si una regla usa países y no hay base (o es de
+    /// otro mes). Un fallo se reintenta a la hora. Al terminar, `revisar` ve que cambian las
+    /// fijas y vuelve a aplicar.
+    fn geo_si_toca(&self, c: &Config) {
+        let ahora = self.sistema.ahora();
+        if crate::geo::usados(c).is_empty() || !crate::geo::toca_actualizar(&self.rutas, ahora) {
+            return;
+        }
+        {
+            let mut g = self.geo.lock().unwrap();
+            if g.descargando || (g.intento != 0 && ahora < g.intento + 3600) {
+                return;
+            }
+            g.descargando = true;
+            g.intento = ahora;
+        }
+        let (s, r, g) = (self.sistema.clone(), self.rutas.clone(), self.geo.clone());
+        let Ok(h) = tokio::runtime::Handle::try_current() else { return };
+        h.spawn_blocking(move || {
+            let res = crate::geo::actualizar(&r, &*s);
+            let mut g = g.lock().unwrap();
+            g.descargando = false;
+            g.error = res.err();
+        });
+    }
+
+    fn avisos_geo(&self, c: &Config) -> Vec<String> {
+        let mut a = crate::geo::avisos(c, &self.rutas);
+        if let Some(e) = &self.geo.lock().unwrap().error
+            && !a.is_empty()
+        {
+            a = vec![format!("No se pudo descargar la base de países ({e}); se reintenta en una hora.")];
+        }
+        a
     }
 
     fn pendiente_json(&self) -> Value {
@@ -251,6 +325,10 @@ impl Estado {
 
 fn usuario(h: &HeaderMap) -> String {
     netctl_sdk::servidor::usuario(h).unwrap_or_else(|| "admin".into())
+}
+
+fn ips_wan_json(v: &[(String, IpAddr, bool)]) -> Value {
+    json!(v.iter().map(|(iface, ip, dinamica)| json!({ "iface": iface, "ip": ip, "dinamica": dinamica })).collect::<Vec<_>>())
 }
 
 fn json_a<T: serde::de::DeserializeOwned>(v: Value) -> Result<T, Fallo> {
@@ -336,6 +414,22 @@ struct CuerpoReenvio {
 }
 
 #[derive(Deserialize)]
+struct CuerpoNat {
+    nat: Value,
+    #[serde(default)]
+    revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct CuerpoZonaNueva {
+    #[serde(default)]
+    nombre: String,
+    #[serde(default)]
+    tarjetas: Vec<String>,
+    revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
 struct CuerpoGrupo {
     #[serde(default)]
     tipo: String,
@@ -392,10 +486,20 @@ pub fn router(e: Arc<Estado>) -> Router {
         .route("/reglas", get(reglas).post(crear_regla))
         .route("/reglas/orden", post(ordenar_reglas))
         .route("/reglas/{id}", put(editar_regla).delete(borrar_regla))
+        .route("/reglas/{id}/duplicar", post(duplicar_regla))
+        .route("/politicas", get(politicas))
+        .route("/tabla", get(tabla))
+        .route("/geo", get(ver_geo))
+        .route("/apps", get(ver_apps))
+        .route("/zonas", post(crear_zona))
+        .route("/zonas/{id}", put(editar_zona).delete(borrar_zona))
         .route("/reenvios", get(reenvios).post(crear_reenvio))
         .route("/reenvios/comprobar", post(comprobar_reenvio))
         .route("/reenvios/{id}", put(editar_reenvio).delete(borrar_reenvio))
         .route("/reenvios/{id}/{accion}", post(accion_reenvio))
+        .route("/nat", get(nat_lista).post(crear_nat))
+        .route("/nat/{id}", put(editar_nat).delete(borrar_nat))
+        .route("/nat/{id}/{accion}", post(accion_nat))
         .route("/plantillas", get(|| async { Json(plantillas::todas()) }))
         .route("/grupos", get(grupos).post(crear_grupo))
         .route("/grupos/{id}", put(editar_grupo).delete(borrar_grupo))
@@ -567,7 +671,9 @@ async fn ver_config(State(e): E) -> R {
                 "panel": f.panel,
                 "pendiente": e.pendiente_json(),
                 "una_interfaz": c.una_interfaz(),
-                "ips_externas": leer::ips_externas(&c),
+                "ips_externas": ips_wan_json(&e.ips_wan(&c)),
+                "avisos": nft::avisos(&c, e.sistema.ahora()).into_iter().chain(e.dominios.lock().unwrap().avisos.clone()).chain(e.avisos_geo(&c)).collect::<Vec<_>>(),
+                "tarjetas_de_zona": c.zonas.iter().map(|z| (z.id.clone(), c.ifaces_de(&z.id))).collect::<std::collections::BTreeMap<_, _>>(),
             }))
             .into_response()
         }
@@ -652,6 +758,317 @@ async fn poner_politica(State(e): E, h: HeaderMap, Path((o, d)): Path<(String, S
     Ok(e.aceptado(&esp, &c, json!({})))
 }
 
+/// Texto corto de una dirección (como `textoDireccion` del kit).
+fn texto_dir(c: &Config, d: &Direccion) -> String {
+    match d {
+        Direccion::Cualquiera => "Cualquiera".into(),
+        Direccion::Equipo { ip, nombre, .. } if !nombre.is_empty() => format!("{nombre} · {ip}"),
+        Direccion::Equipo { ip, .. } => ip.to_string(),
+        Direccion::Ip { red } if red.prefix_len() == red.max_prefix_len() => red.addr().to_string(),
+        Direccion::Ip { red } => red.to_string(),
+        Direccion::Rango { desde, hasta } => format!("{desde} – {hasta}"),
+        Direccion::Grupo { id } => {
+            let n = c.grupos_ip.iter().find(|g| g.id == *id).map(|g| g.nombre.clone()).unwrap_or_else(|| id.to_string());
+            format!("Grupo «{n}»")
+        }
+        Direccion::Interfaz { iface } => format!("Tarjeta {iface}"),
+        Direccion::Mac { mac } => format!("MAC {mac}"),
+        Direccion::Dominio { nombres } => nombres.join(", "),
+        Direccion::Pais { codigos } => format!("País {}", codigos.join(", ")),
+        Direccion::App { nombres, .. } if !nombres.is_empty() => nombres.join(", "),
+        Direccion::App { apps, .. } => format!("App {}", apps.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ")),
+    }
+}
+
+fn texto_puertos(c: &Config, p: &Puertos) -> String {
+    match p {
+        Puertos::Cualquiera => "Cualquiera".into(),
+        Puertos::Lista(l) => l
+            .iter()
+            .map(|r| if r.desde == r.hasta { r.desde.to_string() } else { format!("{}-{}", r.desde, r.hasta) })
+            .collect::<Vec<_>>()
+            .join(", "),
+        Puertos::Grupo(id) => {
+            let n = c.grupos_puertos.iter().find(|g| g.id == *id).map(|g| g.nombre.clone()).unwrap_or_else(|| id.to_string());
+            format!("Grupo «{n}»")
+        }
+    }
+}
+
+/// Lista de políticas de la página Zonas: las de serie agrupadas por acción y las propias con
+/// sus textos para las columnas.
+async fn politicas(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    let (mut permitir, mut bloquear) = (vec![], vec![]);
+    for o in &c.zonas {
+        for d in &c.zonas {
+            if o.tipo == TipoZona::Gateway && d.tipo == TipoZona::Gateway {
+                continue;
+            }
+            let par = json!({ "origen": o.id, "destino": d.id });
+            if c.politica(&o.id, &d.id) == Politica::Permitir { permitir.push(par) } else { bloquear.push(par) }
+        }
+    }
+    let nombre = |z: &str| c.zona(z).map(|z| z.nombre.clone()).unwrap_or_else(|| z.to_string());
+    let propias: Vec<Value> = c
+        .reglas
+        .iter()
+        .map(|r| {
+            let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("zona_origen_nombre".into(), json!(nombre(&r.origen_zona)));
+                o.insert("zona_destino_nombre".into(), json!(nombre(&r.destino_zona)));
+                o.insert("texto_origen".into(), json!(texto_dir(&c, &r.origen)));
+                o.insert("texto_destino".into(), json!(texto_dir(&c, &r.destino)));
+                o.insert("texto_puertos".into(), json!(texto_puertos(&c, &r.puertos)));
+                o.insert("texto_puertos_origen".into(), json!(texto_puertos(&c, &r.puertos_origen)));
+            }
+            v
+        })
+        .collect();
+    Ok(Json(json!({
+        "de_serie": [
+            { "nombre": "Permitir todo", "accion": "permitir", "parejas": permitir },
+            { "nombre": "Bloquear todo", "accion": "bloquear", "parejas": bloquear },
+        ],
+        "propias": propias,
+    }))
+    .into_response())
+}
+
+fn texto_proto(p: Protocolo, n: u8) -> String {
+    match p {
+        Protocolo::Cualquiera => "Cualquiera".into(),
+        Protocolo::Tcp => "TCP".into(),
+        Protocolo::Udp => "UDP".into(),
+        Protocolo::TcpUdp => "TCP/UDP".into(),
+        Protocolo::Icmp => "ICMP".into(),
+        Protocolo::Otro => format!("Otro ({n})"),
+    }
+}
+
+/// Tabla de políticas: reglas propias, NAT propio, reenvíos y, al final, las de serie
+/// agrupadas como en `/politicas`. Todas con las mismas columnas.
+async fn tabla(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    let nombre = |z: &str| c.zona(z).map(|z| z.nombre.clone()).unwrap_or_else(|| z.to_string());
+    let mut filas = vec![];
+    for r in &c.reglas {
+        let accion = match r.accion {
+            Accion::Permitir => "Permitir",
+            Accion::Bloquear => "Bloquear",
+            Accion::Rechazar => "Rechazar",
+        };
+        filas.push(json!({
+            "tipo": "firewall", "id": r.id, "nombre": r.nombre, "accion": accion,
+            "protocolo": texto_proto(r.protocolo, r.numero_protocolo),
+            "zona_origen": nombre(&r.origen_zona), "zona_destino": nombre(&r.destino_zona),
+            "origen": texto_dir(&c, &r.origen), "destino": texto_dir(&c, &r.destino),
+            "puerto_destino": texto_puertos(&c, &r.puertos), "interfaz": Value::Null,
+            "activa": r.activa, "de_serie": false,
+        }));
+    }
+    for n in &c.nat_propio {
+        let (accion, destino) = match &n.tipo {
+            TipoNat::Masquerade => ("Masquerade", texto_dir(&c, &n.destino)),
+            TipoNat::Snat { .. } => ("SNAT", texto_dir(&c, &n.destino)),
+            TipoNat::Dnat { ip, puerto } => {
+                let a = match puerto {
+                    Some(p) => format!("{ip}:{p}"),
+                    None => ip.to_string(),
+                };
+                ("DNAT", format!("{} → {a}", texto_dir(&c, &n.destino)))
+            }
+        };
+        filas.push(json!({
+            "tipo": "nat", "id": n.id, "nombre": n.nombre, "accion": accion,
+            "protocolo": texto_proto(n.protocolo, 0), "zona_origen": Value::Null, "zona_destino": Value::Null,
+            "origen": texto_dir(&c, &n.origen), "destino": destino,
+            "puerto_destino": texto_puertos(&c, &n.puertos), "interfaz": n.iface,
+            "activa": n.activa, "de_serie": false,
+        }));
+    }
+    let ahora = e.sistema.ahora();
+    let wan = e.ips_wan(&c);
+    let externa = c.zonas_tipo(TipoZona::Externa).first().map(|z| nombre(z));
+    {
+        let v = e.vivo.lock().unwrap();
+        for r in &c.reenvios {
+            let vista = vista_reenvio(&c, r, &v, ahora, &wan);
+            let mut puertos = texto_puertos(&c, &Puertos::Lista(r.externo.clone()));
+            if let Some(i) = r.interno {
+                puertos = format!("{puertos} → {i}");
+            }
+            let origen = if r.desde.is_empty() {
+                "Cualquiera".to_string()
+            } else {
+                r.desde.iter().map(|d| texto_dir(&c, d)).collect::<Vec<_>>().join(", ")
+            };
+            let interfaz = match (&r.wan, r.wan_ip) {
+                (Some(w), Some(ip)) => Some(format!("{w} · {ip}")),
+                (Some(w), None) => Some(w.clone()),
+                (None, Some(ip)) => Some(ip.to_string()),
+                (None, None) => None,
+            };
+            filas.push(json!({
+                "tipo": "reenvio", "id": r.id, "nombre": r.nombre, "accion": "Reenviar",
+                "protocolo": texto_proto(r.protocolo, 0), "zona_origen": externa, "zona_destino": Value::Null,
+                "origen": origen, "destino": texto_dir(&c, &r.equipo), "puerto_destino": puertos,
+                "interfaz": interfaz, "activa": r.activo, "de_serie": false,
+                "estado": vista["estado"], "caduca_en": vista["caduca_en"], "avisos": vista["avisos"],
+                "como_conectarse": vista["como_conectarse"],
+            }));
+        }
+    }
+    let (mut permitir, mut bloquear) = (vec![], vec![]);
+    for o in &c.zonas {
+        for d in &c.zonas {
+            if o.tipo == TipoZona::Gateway && d.tipo == TipoZona::Gateway {
+                continue;
+            }
+            let par = json!({ "origen": o.id, "destino": d.id });
+            if c.politica(&o.id, &d.id) == Politica::Permitir { permitir.push(par) } else { bloquear.push(par) }
+        }
+    }
+    for (id, n, accion, parejas) in [("serie_permitir", "Permitir todo", "Permitir", permitir), ("serie_bloquear", "Bloquear todo", "Bloquear", bloquear)] {
+        if parejas.is_empty() {
+            continue;
+        }
+        filas.push(json!({
+            "tipo": "firewall", "id": id, "nombre": n, "accion": accion, "protocolo": "Cualquiera",
+            "zona_origen": Value::Null, "zona_destino": Value::Null, "origen": "Cualquiera", "destino": "Cualquiera",
+            "puerto_destino": "Cualquiera", "interfaz": Value::Null, "activa": true, "de_serie": true, "parejas": parejas,
+        }));
+    }
+    Ok(Json(Value::Array(filas)).into_response())
+}
+
+/// Apps que conoce la libndpi del sistema, preguntando al ayudante `netctl-dpi`.
+async fn ver_apps(State(e): E) -> Json<Value> {
+    if let Some(v) = e.apps.lock().unwrap().clone() {
+        return Json(v);
+    }
+    let (s, ruta) = (e.sistema.clone(), e.rutas.dpi.clone());
+    let r = tokio::task::spawn_blocking(move || s.ejecutar(&ruta.to_string_lossy(), &["apps"], None)).await;
+    let v = match r.ok().and_then(Result::ok).and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+        Some(v) => v,
+        None => json!({ "disponible": false, "motivo": "Falta el ayudante netctl-dpi: vuelve a instalar el módulo Firewall." }),
+    };
+    if v["disponible"] == true {
+        *e.apps.lock().unwrap() = Some(v.clone());
+    }
+    Json(v)
+}
+
+impl Estado {
+    /// ¿Hay reglas de App activas? Entonces tiene que correr `netctl-dpi cola`.
+    pub fn necesita_dpi(&self) -> bool {
+        self.actual().ok().flatten().is_some_and(|c| !nft::parejas_app(&c).is_empty())
+    }
+}
+
+/// Estado de la base de países y los países que se pueden elegir.
+async fn ver_geo(State(e): E) -> Json<Value> {
+    let fecha = crate::geo::fecha(&e.rutas);
+    let descargando = e.geo.lock().unwrap().descargando;
+    let estado = if descargando { "descargando" } else if fecha.is_some() { "lista" } else { "falta" };
+    let paises: Vec<Value> = match crate::geo::base(&e.rutas) {
+        Some(b) => b.keys().filter(|c| *c != "ZZ").map(|c| json!({ "codigo": c })).collect(),
+        None => crate::geo::CODIGOS.split(' ').map(|c| json!({ "codigo": c })).collect(),
+    };
+    Json(json!({ "estado": estado, "fecha": fecha, "paises": paises, "atribucion": "IP Geolocation by DB-IP", "enlace": "https://db-ip.com" }))
+}
+
+async fn duplicar_regla(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<ConRevision>) -> R {
+    let id: u64 = id.parse().map_err(|_| Fallo::error(StatusCode::FORBIDDEN, FIJA))?;
+    let (nuevo, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla duplicada", |c| {
+            let pos = c.reglas.iter().position(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            let mut r = c.reglas[pos].clone();
+            r.id = c.nuevo_id();
+            r.nombre = format!("{} (copia)", r.nombre);
+            r.activa = false;
+            let nuevo = r.id;
+            c.reglas.insert(pos + 1, r);
+            Ok(nuevo)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": nuevo })))
+}
+
+fn poner_tarjetas(c: &mut Config, zona: &str, tarjetas: &[String]) -> Result<(), Fallo> {
+    if let Some(i) = tarjetas.iter().find(|i| !validar::es_iface(i)) {
+        return Err(Fallo::errores(vec![format!("«{}» no es un nombre de tarjeta válido.", crate::nombre_seguro(i))]));
+    }
+    c.interfaces.retain(|i, z| z != zona || tarjetas.contains(i));
+    for i in tarjetas {
+        c.interfaces.insert(i.clone(), zona.to_string());
+    }
+    Ok(())
+}
+
+fn nombre_zona(n: &str) -> Result<String, Fallo> {
+    let n = n.trim();
+    if n.is_empty() {
+        return Err(Fallo::errores(vec!["Ponle un nombre a la zona, por ejemplo «Cámaras».".into()]));
+    }
+    Ok(n.to_string())
+}
+
+async fn crear_zona(State(e): E, h: HeaderMap, Json(b): Json<CuerpoZonaNueva>) -> R {
+    let nombre = nombre_zona(&b.nombre)?;
+    let (id, esp, c) = e
+        .mutar(b.revision, &usuario(&h), &format!("Zona nueva «{nombre}»"), |c| {
+            let id = format!("z{}", c.nuevo_id());
+            c.zonas.push(Zona { id: id.clone(), nombre: nombre.clone(), tipo: TipoZona::Personalizada });
+            poner_tarjetas(c, &id, &b.tarjetas)?;
+            Ok(id)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": id })))
+}
+
+async fn editar_zona(State(e): E, h: HeaderMap, Path(id): Path<String>, Json(b): Json<CuerpoZonaNueva>) -> R {
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), &format!("Zona «{id}» cambiada"), |c| {
+            let z = c.zonas.iter_mut().find(|z| z.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            if z.tipo == TipoZona::Personalizada {
+                z.nombre = nombre_zona(&b.nombre)?;
+            }
+            poner_tarjetas(c, &id, &b.tarjetas)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn borrar_zona(State(e): E, h: HeaderMap, Path(id): Path<String>, Query(q): Query<ConRevision>) -> R {
+    let c0 = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    match c0.zona(&id) {
+        None => return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE)),
+        Some(z) if z.tipo != TipoZona::Personalizada => {
+            return Err(Fallo::error(StatusCode::FORBIDDEN, "Las zonas de serie no se pueden borrar; solo puedes cambiar sus tarjetas."));
+        }
+        _ => {}
+    }
+    let (_, esp, c) = e
+        .mutar(q.revision, &usuario(&h), &format!("Zona «{id}» borrada"), |c| {
+            let usos: Vec<String> = c.reglas.iter().filter(|r| r.origen_zona == id || r.destino_zona == id).map(|r| r.nombre.clone()).collect();
+            if !usos.is_empty() {
+                return Err(Fallo(
+                    StatusCode::CONFLICT,
+                    json!({ "error": "Esta zona se usa en otras reglas: bórralas o cámbialas antes.", "usos": usos }),
+                ));
+            }
+            c.zonas.retain(|z| z.id != id);
+            c.interfaces.retain(|_, z| *z != id);
+            c.politicas.retain(|p| p.origen != id && p.destino != id);
+            c.nat.remove(&id);
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
 async fn reglas(State(e): E) -> R {
     let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
     Ok(Json(json!({ "reglas": c.reglas, "fijas": fijas_json(&e.fijas(&c)) })).into_response())
@@ -715,7 +1132,7 @@ async fn ordenar_reglas(State(e): E, h: HeaderMap, Json(b): Json<CuerpoOrden>) -
 }
 
 /// Estado en llano de un reenvío para la lista.
-fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
+fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64, wan: &[(String, IpAddr, bool)]) -> Value {
     let estado = if !r.activo || r.caduca.is_some_and(|x| x <= ahora) {
         "desactivada"
     } else {
@@ -729,7 +1146,7 @@ fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
         o.insert("conexiones".into(), json!(v.contadores.get(&clave).map(|x| x.0).unwrap_or(0)));
         o.insert("ultima".into(), json!(v.ultima.get(&clave)));
         o.insert("como_conectarse".into(), json!(como_conectarse(c, r)));
-        o.insert("avisos".into(), json!(validar::avisos_reenvio(c, r)));
+        o.insert("avisos".into(), json!(validar::avisos_reenvio(c, r, wan)));
     }
     x
 }
@@ -737,9 +1154,10 @@ fn vista_reenvio(c: &Config, r: &Reenvio, v: &Vivo, ahora: u64) -> Value {
 async fn reenvios(State(e): E) -> R {
     let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
     let ahora = e.sistema.ahora();
+    let wan = e.ips_wan(&c);
     let v = e.vivo.lock().unwrap();
-    let l: Vec<Value> = c.reenvios.iter().map(|r| vista_reenvio(&c, r, &v, ahora)).collect();
-    Ok(Json(json!({ "reenvios": l, "ips_externas": leer::ips_externas(&c), "una_interfaz": c.una_interfaz() })).into_response())
+    let l: Vec<Value> = c.reenvios.iter().map(|r| vista_reenvio(&c, r, &v, ahora, &wan)).collect();
+    Ok(Json(json!({ "reenvios": l, "ips_externas": ips_wan_json(&wan), "una_interfaz": c.una_interfaz() })).into_response())
 }
 
 async fn crear_reenvio(State(e): E, h: HeaderMap, Json(b): Json<CuerpoReenvio>) -> R {
@@ -793,6 +1211,12 @@ async fn accion_reenvio(State(e): E, h: HeaderMap, Path((id, accion)): Path<(u64
             let i = c.reenvios.iter().position(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
             match accion.as_str() {
                 "activar" => {
+                    if let Some((con, otro)) = validar::choca_con(c, &c.reenvios[i]) {
+                        return Err(Fallo(
+                            StatusCode::CONFLICT,
+                            json!({ "error": format!("No se puede reanudar: choca con «{otro}»."), "con": con }),
+                        ));
+                    }
                     c.reenvios[i].activo = true;
                     Ok(None)
                 }
@@ -830,12 +1254,71 @@ async fn comprobar_reenvio(State(e): E, Json(b): Json<CuerpoReenvio>) -> R {
     let wan_privada = !externas.is_empty() && externas.iter().all(|i| i.is_private() || (i.octets()[0] == 100 && (64..128).contains(&i.octets()[1])));
     Ok(Json(json!({
         "errores": errores,
-        "avisos": validar::avisos_reenvio(&c, &r),
+        "avisos": validar::avisos_reenvio(&c, &r, &e.ips_wan(&c)),
         "siguiente_libre": siguiente,
         "como_conectarse": como_conectarse(&c, &r),
         "wan_privada": wan_privada,
     }))
     .into_response())
+}
+
+async fn nat_lista(State(e): E) -> R {
+    let c = e.actual().ok().flatten().ok_or_else(|| Fallo::error(StatusCode::CONFLICT, SIN_CONFIG))?;
+    Ok(Json(json!({ "nat": c.nat_propio, "automatico": c.nat })).into_response())
+}
+
+async fn crear_nat(State(e): E, h: HeaderMap, Json(b): Json<CuerpoNat>) -> R {
+    let (id, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla NAT nueva", |c| {
+            let id = c.nuevo_id();
+            let n: ReglaNat = con_id(b.nat, id)?;
+            c.nat_propio.push(n);
+            Ok(id)
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({ "id": id })))
+}
+
+async fn editar_nat(State(e): E, h: HeaderMap, Path(id): Path<u64>, Json(b): Json<CuerpoNat>) -> R {
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), "Regla NAT editada", |c| {
+            let n: ReglaNat = con_id(b.nat, id)?;
+            let x = c.nat_propio.iter_mut().find(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            *x = n;
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn borrar_nat(State(e): E, h: HeaderMap, Path(id): Path<u64>, Query(q): Query<ConRevision>) -> R {
+    let (_, esp, c) = e
+        .mutar(q.revision, &usuario(&h), "Regla NAT borrada", |c| {
+            let antes = c.nat_propio.len();
+            c.nat_propio.retain(|n| n.id != id);
+            if c.nat_propio.len() == antes {
+                return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE));
+            }
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
+}
+
+async fn accion_nat(State(e): E, h: HeaderMap, Path((id, accion)): Path<(u64, String)>, Json(b): Json<ConRevision>) -> R {
+    let (activa, resumen) = match accion.as_str() {
+        "activar" => (true, "Regla NAT activada"),
+        "desactivar" => (false, "Regla NAT desactivada"),
+        _ => return Err(Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE)),
+    };
+    let (_, esp, c) = e
+        .mutar(b.revision, &usuario(&h), resumen, |c| {
+            let x = c.nat_propio.iter_mut().find(|x| x.id == id).ok_or_else(|| Fallo::error(StatusCode::NOT_FOUND, NO_EXISTE))?;
+            x.activa = activa;
+            Ok(())
+        })
+        .await?;
+    Ok(e.aceptado(&esp, &c, json!({})))
 }
 
 async fn grupos(State(e): E) -> R {

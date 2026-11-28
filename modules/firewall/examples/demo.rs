@@ -57,6 +57,7 @@ fn reenvio(id: u64, nombre: &str, eq: Direccion, proto: Protocolo, puertos: &[(u
         externo: puertos.iter().map(|(a, b)| RangoPuerto { desde: *a, hasta: *b }).collect(),
         interno: None,
         wan: None,
+        wan_ip: None,
         desde: vec![],
         caduca: None,
         loopback: true,
@@ -74,7 +75,7 @@ fn config(ifaces: &[Iface], una: bool) -> Config {
         c.reglas.push(Regla {
             id: 1, nombre: "Servidor web".into(), origen_zona: "externa".into(), destino_zona: "gateway".into(),
             accion: Accion::Permitir, protocolo: Protocolo::Tcp, puertos: Puertos::Lista(vec![RangoPuerto::uno(80), RangoPuerto::uno(443)]),
-            origen: Direccion::Cualquiera, destino: Direccion::Cualquiera, log: false, activa: true, notas: String::new(),
+            origen: Direccion::Cualquiera, destino: Direccion::Cualquiera, log: false, activa: true, ..Default::default()
         });
         return c;
     }
@@ -91,17 +92,17 @@ fn config(ifaces: &[Iface], una: bool) -> Config {
         id: 4, nombre: "Cámaras sin internet".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
         accion: Accion::Bloquear, protocolo: Protocolo::Cualquiera, puertos: Puertos::Cualquiera,
         origen: Direccion::Grupo { id: 2 }, destino: Direccion::Cualquiera, log: false, activa: true,
-        notas: "Que no manden vídeo a la nube del fabricante".into(),
+        descripcion: "Que no manden vídeo a la nube del fabricante".into(), ..Default::default()
     });
     c.reglas.push(Regla {
         id: 5, nombre: "Panel web de la DMZ desde la oficina".into(), origen_zona: "externa".into(), destino_zona: "gateway".into(),
         accion: Accion::Permitir, protocolo: Protocolo::Tcp, puertos: Puertos::Grupo(3),
-        origen: Direccion::Grupo { id: 1 }, destino: Direccion::Cualquiera, log: false, activa: true, notas: String::new(),
+        origen: Direccion::Grupo { id: 1 }, destino: Direccion::Cualquiera, log: false, activa: true, ..Default::default()
     });
     c.reglas.push(Regla {
         id: 6, nombre: "Impresora solo LAN".into(), origen_zona: "vpn".into(), destino_zona: "interna".into(),
         accion: Accion::Rechazar, protocolo: Protocolo::Tcp, puertos: Puertos::Lista(vec![RangoPuerto::uno(9100)]),
-        origen: Direccion::Cualquiera, destino: equipo("aa:bb:cc:00:00:40", "192.168.1.40", "Impresora"), log: false, activa: false, notas: String::new(),
+        origen: Direccion::Cualquiera, destino: equipo("aa:bb:cc:00:00:40", "192.168.1.40", "Impresora"), log: false, activa: false, ..Default::default()
     });
     let nas = equipo("aa:bb:cc:00:00:20", "192.168.1.20", "Servidor-casa");
     let mut web = reenvio(7, "Servidor-casa · Web", nas.clone(), Protocolo::Tcp, &[(80, 80), (443, 443)]);
@@ -124,7 +125,12 @@ fn config(ifaces: &[Iface], una: bool) -> Config {
     viejo.activo = false;
     viejo.plantilla = Some("ssh".into());
     c.reenvios = vec![web, mc, juegos, rdp, cam, viejo];
-    c.sig_id = 12;
+    c.nat_propio = vec![ReglaNat {
+        id: 13, nombre: "Oficina sale por la IP 2".into(), tipo: TipoNat::Snat { ip: "198.51.100.20".parse().unwrap() },
+        iface: Some("enp1s0".into()), origen: Direccion::Ip { red: "192.168.1.0/28".parse().unwrap() }, destino: Direccion::Cualquiera,
+        protocolo: Protocolo::Cualquiera, puertos: Puertos::Cualquiera, activa: true, descripcion: String::new(),
+    }];
+    c.sig_id = 13;
     c
 }
 

@@ -6,7 +6,8 @@
 
   // Entradas: Inicio, después las de cada módulo (de su manifiesto) y abajo Módulos y Ajustes.
   const entradasModulos = $derived(
-    sesion.modulos.map((m) => ({
+    // Un módulo que solo aporta páginas a Ajustes (p. ej. el Firewall) no sale aquí.
+    sesion.modulos.filter((m) => m.menu?.length || !m.ajustes?.length).map((m) => ({
       id: m.id,
       nombre: m.nombre,
       entradas: (m.menu?.length ? m.menu : [{ titulo: m.nombre, ruta: '', icono: m.icono }]).map((e) => ({

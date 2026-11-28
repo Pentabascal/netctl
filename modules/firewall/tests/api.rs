@@ -394,7 +394,7 @@ async fn config_trae_matriz() {
     pedir(&p, "PUT", "/politicas/interna/externa", Some(json!({"politica": "bloquear", "revision": revision(&p).await}))).await;
     let (_, v) = pedir(&p, "GET", "/config", None).await;
     let m = v["matriz"].as_array().unwrap();
-    assert_eq!(m.len(), 5 * 5 - 1, "todas las parejas menos gateway→gateway");
+    assert_eq!(m.len(), 6 * 6 - 1, "todas las parejas menos gateway→gateway");
     let c = |o: &str, d: &str| m.iter().find(|x| x["origen"] == o && x["destino"] == d).unwrap().clone();
     assert_eq!(c("externa", "gateway")["politica"], "bloquear");
     assert_eq!(c("externa", "gateway")["reglas"], 1);
@@ -411,4 +411,209 @@ async fn equipos_usan_nombres_conocidos() {
     let l = v.as_array().unwrap();
     assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:01").unwrap()["nombre"], "PC Ana");
     assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:02").unwrap()["nombre"], "");
+}
+
+// ---- fase 2.5: página Zonas al estilo UniFi
+
+#[tokio::test]
+async fn politicas_agrupa_las_de_serie() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir", "protocolo": "tcp",
+        "puertos": {"tipo": "lista", "valor": [{"desde": 80, "hasta": 80}]}});
+    pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let (st, v) = pedir(&p, "GET", "/politicas", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let grupos = v["de_serie"].as_array().unwrap();
+    assert_eq!(grupos.len(), 2, "Permitir todo y Bloquear todo: {v}");
+    let total: usize = grupos.iter().map(|g| g["parejas"].as_array().unwrap().len()).sum();
+    assert_eq!(total, 6 * 6 - 1);
+    assert_eq!(grupos[0]["nombre"], "Permitir todo");
+    let propia = &v["propias"][0];
+    assert_eq!(propia["nombre"], "Web");
+    assert_eq!(propia["zona_origen_nombre"], "Externa (internet)");
+    assert_eq!(propia["zona_destino_nombre"], "Esta máquina");
+    assert_eq!(propia["texto_origen"], "Cualquiera");
+    assert_eq!(propia["texto_puertos"], "80");
+    assert_eq!(propia["texto_puertos_origen"], "Cualquiera");
+    // la matriz trae las reglas propias por pareja y los avisos
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert!(v["avisos"].as_array().unwrap().is_empty());
+    assert_eq!(v["tarjetas_de_zona"]["interna"], json!(["eth1"]));
+}
+
+#[tokio::test]
+async fn duplicar_regla() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir"});
+    let (_, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let id = v["id"].as_u64().unwrap();
+    let (st, v) = pedir(&p, "POST", &format!("/reglas/{id}/duplicar"), Some(json!({"revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/reglas", None).await;
+    let r = v["reglas"].as_array().unwrap();
+    assert_eq!(r.len(), 2);
+    assert_eq!(r[1]["nombre"], "Web (copia)");
+    assert_eq!(r[1]["activa"], false);
+    assert_ne!(r[1]["id"], r[0]["id"]);
+}
+
+#[tokio::test]
+async fn crear_zona_con_tarjetas() {
+    let p = configurado().await;
+    let (st, v) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": "Cámaras", "tarjetas": ["eth1"], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert_eq!(v["config"]["interfaces"]["eth1"], json!(id));
+    let z = v["config"]["zonas"].as_array().unwrap().iter().find(|z| z["id"] == json!(id)).unwrap().clone();
+    assert_eq!(z["tipo"], "personalizada");
+    assert_eq!(z["nombre"], "Cámaras");
+    // renombrar y quitar la tarjeta (vuelve a… ninguna zona: la tarjeta queda sin zona)
+    let (st, v) = pedir(&p, "PUT", &format!("/zonas/{id}"), Some(json!({"nombre": "CCTV", "tarjetas": [], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert!(v["config"]["interfaces"].get("eth1").is_none());
+    // nombre vacío
+    let (st, _) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": " ", "tarjetas": [], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn zona_de_serie_no_se_borra() {
+    let p = configurado().await;
+    let (st, _) = pedir(&p, "DELETE", &format!("/zonas/dmz?revision={}", revision(&p).await), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    // en las de serie solo cambian las tarjetas, no el nombre
+    let (st, _) = pedir(&p, "PUT", "/zonas/dmz", Some(json!({"nombre": "Otra", "tarjetas": ["eth1"], "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    let z = v["config"]["zonas"].as_array().unwrap().iter().find(|z| z["id"] == "dmz").unwrap().clone();
+    assert_eq!(z["nombre"], "DMZ");
+    assert_eq!(v["config"]["interfaces"]["eth1"], "dmz");
+}
+
+#[tokio::test]
+async fn zona_en_uso_409() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "POST", "/zonas", Some(json!({"nombre": "Cámaras", "tarjetas": [], "revision": revision(&p).await}))).await;
+    let id = v["id"].as_str().unwrap().to_string();
+    let regla = json!({"nombre": "Cámaras fuera", "origen_zona": id, "destino_zona": "externa", "accion": "bloquear"});
+    let (st, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (st, v) = pedir(&p, "DELETE", &format!("/zonas/{id}?revision={}", revision(&p).await), None).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert_eq!(v["usos"], json!(["Cámaras fuera"]));
+}
+
+#[tokio::test]
+async fn crear_nat_202() {
+    let p = configurado().await;
+    let rev = revision(&p).await;
+    let nat = json!({ "nombre": "Web interna", "tipo": { "tipo": "dnat", "ip": "192.168.1.10", "puerto": 8080 },
+        "iface": "eth0", "protocolo": "tcp", "puertos": { "tipo": "lista", "valor": [{ "desde": 80, "hasta": 80 }] } });
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({ "nat": nat, "revision": rev }))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    assert!(v["pendiente"]["id"].is_u64());
+    let id = v["id"].as_u64().unwrap();
+    let (_, l) = pedir(&p, "GET", "/nat", None).await;
+    assert_eq!(l["nat"][0]["id"], id);
+    let rev = revision(&p).await;
+    let (st, _) = pedir(&p, "POST", &format!("/nat/{id}/desactivar"), Some(json!({ "revision": rev }))).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let (_, l) = pedir(&p, "GET", "/nat", None).await;
+    assert_eq!(l["nat"][0]["activa"], false);
+    // Un DNAT con puerto sin protocolo se rechaza con el texto del plan.
+    let rev = revision(&p).await;
+    let malo = json!({ "nombre": "x", "tipo": { "tipo": "dnat", "ip": "192.168.1.10", "puerto": 8080 } });
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({ "nat": malo, "revision": rev }))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v.to_string().contains("Para DNAT con puerto elige TCP o UDP."), "{v}");
+    let rev = revision(&p).await;
+    let (st, _) = pedir(&p, "DELETE", &format!("/nat/{id}?revision={rev}"), None).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn reanudar_con_choque_409() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "POST", "/reenvios", Some(json!({"reenvio": reenvio_json(25565), "revision": revision(&p).await}))).await;
+    let id = v["id"].as_u64().unwrap();
+    let (_, v) = pedir(&p, "POST", &format!("/reenvios/{id}/duplicar"), Some(json!({"revision": revision(&p).await}))).await;
+    let copia = v["id"].as_u64().unwrap();
+    let (st, v) = pedir(&p, "POST", &format!("/reenvios/{copia}/activar"), Some(json!({"revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"], "No se puede reanudar: choca con «Escritorio de Ana».");
+    assert_eq!(v["con"], id);
+}
+
+#[tokio::test]
+async fn config_ips_externas_con_iface() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    assert_eq!(v["ips_externas"], json!([{"iface": "eth0", "ip": "203.0.113.4", "dinamica": false}]));
+}
+
+#[tokio::test]
+async fn tabla_junta_los_tres_tipos() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir", "protocolo": "tcp",
+        "puertos": {"tipo": "lista", "valor": [{"desde": 80, "hasta": 80}]}});
+    pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    let nat = json!({"nombre": "Salida fija", "tipo": {"tipo": "snat", "ip": "203.0.113.4"}, "iface": "eth0"});
+    let (st, v) = pedir(&p, "POST", "/nat", Some(json!({"nat": nat, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    pedir(&p, "POST", "/reenvios", Some(json!({"reenvio": reenvio_json(25565), "revision": revision(&p).await}))).await;
+    let (st, v) = pedir(&p, "GET", "/tabla", None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let filas = v.as_array().unwrap();
+    let tipos: std::collections::BTreeSet<&str> = filas.iter().map(|f| f["tipo"].as_str().unwrap()).collect();
+    assert_eq!(tipos, ["firewall", "nat", "reenvio"].into_iter().collect());
+    let ids: Vec<String> = filas.iter().map(|f| f["id"].to_string()).collect();
+    let unicos: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(ids.len(), unicos.len(), "ids repetidos: {ids:?}");
+    let web = filas.iter().find(|f| f["nombre"] == "Web").unwrap();
+    assert_eq!(web["accion"], "Permitir");
+    assert_eq!(web["protocolo"], "TCP");
+    assert_eq!(web["puerto_destino"], "80");
+    assert_eq!(web["zona_origen"], "Externa (internet)");
+    assert_eq!(web["de_serie"], false);
+    let nat = filas.iter().find(|f| f["tipo"] == "nat").unwrap();
+    assert_eq!(nat["accion"], "SNAT");
+    assert_eq!(nat["interfaz"], "eth0");
+    let r = filas.iter().find(|f| f["tipo"] == "reenvio").unwrap();
+    assert_eq!(r["accion"], "Reenviar");
+    assert_eq!(r["puerto_destino"], "25565");
+    assert_eq!(r["activa"], true);
+    let serie: Vec<&Value> = filas.iter().filter(|f| f["de_serie"] == true).collect();
+    assert_eq!(serie.len(), 2, "de serie agrupadas: {v}");
+    assert!(serie.iter().all(|f| f["parejas"].as_array().is_some_and(|x| !x.is_empty())));
+}
+
+#[tokio::test]
+async fn geo_sin_base_avisa_y_lista_paises() {
+    let p = configurado().await;
+    let (_, v) = pedir(&p, "GET", "/geo", None).await;
+    assert_eq!(v["estado"], "falta");
+    assert!(v["paises"].as_array().unwrap().iter().any(|x| x["codigo"] == "ES"));
+    let regla = json!({"nombre": "Fuera China", "origen_zona": "externa", "destino_zona": "gateway", "accion": "bloquear",
+        "origen": {"tipo": "pais", "codigos": ["CN"]}});
+    let (st, v) = pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    let a = v["avisos"].to_string();
+    assert!(a.contains("base de países"), "{a}");
+}
+
+#[tokio::test]
+async fn apps_sin_ayudante_o_sin_libreria() {
+    let p = montar();
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["disponible"], false, "{v}");
+    let ruta = p.rutas.dpi.to_string_lossy().to_string();
+    p.s.responder(&format!("{ruta} apps"), Ok(r#"{"disponible":false,"motivo":"No está instalada la librería nDPI (paquete libndpi)."}"#));
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["motivo"], "No está instalada la librería nDPI (paquete libndpi).");
+    p.s.responder(&format!("{ruta} apps"), Ok(r#"{"disponible":true,"version":"5.0.0","apps":[{"id":126,"nombre":"YouTube","categoria":"Media"}]}"#));
+    let (_, v) = pedir(&p, "GET", "/apps", None).await;
+    assert_eq!(v["apps"][0]["nombre"], "YouTube");
 }

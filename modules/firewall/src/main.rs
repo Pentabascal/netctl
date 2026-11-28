@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use netctl_mod_firewall::api::{self, Estado};
 use netctl_mod_firewall::aplicar::PLAZO;
+use netctl_mod_firewall::nft;
 use netctl_mod_firewall::sistema::{Rutas, SistemaReal};
 
 #[tokio::main]
@@ -30,5 +31,37 @@ async fn main() -> anyhow::Result<()> {
     // Primero las reglas (el servicio arranca antes que la red) y después el socket.
     e.arrancar().await;
     tokio::spawn(e.clone().revisar_siempre());
+    tokio::spawn(vigilar_dpi(e.clone()));
     netctl_sdk::servidor::servir("firewall", api::router(e)).await
+}
+
+/// Arranca `netctl-dpi cola` mientras haya reglas de App y lo vuelve a arrancar si se cae (el
+/// tráfico no se corta mientras tanto: la cola lleva `bypass`). Lo para cuando ya no hacen falta.
+async fn vigilar_dpi(e: Arc<Estado>) {
+    let mut hijo: Option<std::process::Child> = None;
+    let mut t = tokio::time::interval(std::time::Duration::from_secs(10));
+    loop {
+        t.tick().await;
+        if let Some(h) = &mut hijo
+            && !matches!(h.try_wait(), Ok(None))
+        {
+            hijo = None;
+        }
+        match (e.necesita_dpi(), &mut hijo) {
+            (true, None) => {
+                // `ct original packets` necesita la contabilidad de conntrack.
+                let _ = std::fs::write("/proc/sys/net/netfilter/nf_conntrack_acct", "1");
+                match std::process::Command::new(&e.rutas.dpi).args(["cola", &nft::COLA_DPI.to_string()]).spawn() {
+                    Ok(h) => hijo = Some(h),
+                    Err(x) => eprintln!("No se pudo arrancar netctl-dpi: {x}"),
+                }
+            }
+            (false, Some(h)) => {
+                let _ = h.kill();
+                let _ = h.wait();
+                hijo = None;
+            }
+            _ => {}
+        }
+    }
 }

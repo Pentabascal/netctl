@@ -316,7 +316,7 @@
     min-height: var(--alto-campo);
     padding: 4px 8px;
     background: var(--campo);
-    border: 1px solid var(--borde-fuerte);
+    border: 1px solid var(--borde-campo);
     border-radius: var(--radio-pq);
     cursor: text;
   }

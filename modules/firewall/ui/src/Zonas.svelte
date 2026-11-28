@@ -1,153 +1,107 @@
 <script>
-  // Firewall › Zonas: tarjetas arriba y pestañas Matriz / Interfaces / Ajustes. Con una sola
-  // tarjeta de red, en lugar de la matriz se ve «Qué puede entrar a esta máquina».
+  // Firewall › Zonas, como en UniFi: esquema plegable, tabla de zonas, matriz que filtra y la lista
+  // de políticas debajo. Con una sola tarjeta de red se ve «Qué puede entrar a esta máquina».
   import { onMount } from 'svelte';
-  import { Barra, Pestanas, Tarjeta, Matriz, Aviso } from '@netctl/kit';
+  import { Matriz } from '@netctl/kit';
   import { fw } from './estado.svelte.js';
-  import PanelCasilla from './PanelCasilla.svelte';
-  import Interfaces from './Interfaces.svelte';
-  import Ajustes from './Ajustes.svelte';
+  import { ordenarZonas } from './listaPoliticas.js';
+  import EsquemaZonas from './EsquemaZonas.svelte';
+  import TablaZonas from './TablaZonas.svelte';
+  import PanelZona from './PanelZona.svelte';
+  import PanelPareja from './PanelPareja.svelte';
+  import PanelAjustes from './PanelAjustes.svelte';
+  import ListaPoliticas from './ListaPoliticas.svelte';
   import SoloEntrada from './SoloEntrada.svelte';
+  import FormPolitica from './FormPolitica.svelte';
 
   let { api, config } = $props();
 
-  let pestana = $state('matriz');
-  let casilla = $state(null); // { origen, destino }
-  let resumen = $state(null);
+  const c = $derived(config.config);
+  const zonas = $derived(ordenarZonas(c.zonas));
+  const celdas = $derived(Object.fromEntries(config.matriz.map((m) => [`${m.origen}>${m.destino}`, m])));
+  const nombreZona = (id) => c.zonas.find((z) => z.id === id)?.nombre ?? id;
 
-  async function cargarResumen() {
+  let politicas = $state(null);
+  let interfaces = $state([]);
+  let par = $state(null); // [origen, destino] elegido en la matriz
+  let panel = $state(null); // { tipo: 'zona'|'pareja'|'ajustes'|'politica', … }
+
+  async function cargar() {
     try {
-      resumen = await api.get('/resumen');
+      [politicas, interfaces] = await Promise.all([api.get('/politicas'), api.get('/interfaces').then((r) => r.interfaces)]);
     } catch {
-      resumen = null;
+      /* la página ya enseña el error general si la API no responde */
     }
   }
-  onMount(() => {
-    cargarResumen();
-    const t = setInterval(cargarResumen, 5000);
-    return () => clearInterval(t);
-  });
+  onMount(cargar);
   $effect(() => {
     fw.version;
-    cargarResumen();
+    cargar();
   });
 
-  const c = $derived(config.config);
-  // Orden de la matriz: Externa, Interna, VPN, DMZ, personalizadas y la propia máquina al final.
-  const ORDEN = { externa: 0, interna: 1, vpn: 2, dmz: 3, personalizada: 4, gateway: 5 };
-  const zonas = $derived([...c.zonas].sort((a, b) => ORDEN[a.tipo] - ORDEN[b.tipo]));
-  const celdas = $derived(Object.fromEntries(config.matriz.map((m) => [`${m.origen}>${m.destino}`, m])));
-  const metrica = (n) => resumen?.metricas?.find((m) => m.etiqueta === n);
+  const sinZona = $derived(interfaces.filter((i) => i.nombre !== 'lo' && !c.interfaces[i.nombre]).map((i) => i.nombre));
+  const todas = $derived((politicas?.propias?.length ?? 0) + (politicas?.de_serie?.length ?? 0));
+
+  function editarRegla(id) {
+    const r = c.reglas.find((x) => x.id === id);
+    if (r) panel = { tipo: 'politica', regla: r, origen: r.origen_zona, destino: r.destino_zona };
+  }
+  function crearRegla() {
+    const [o, d] = par ?? ['interna', 'externa'];
+    panel = { tipo: 'politica', regla: null, origen: o, destino: d };
+  }
 </script>
 
 <div class="nc-pagina">
-  <Barra
-    titulo={config.una_interfaz ? 'Qué puede entrar a esta máquina' : 'Zonas'}
-    subtitulo={config.una_interfaz
-      ? 'Esta máquina tiene una sola tarjeta de red: aquí eliges qué servicios se pueden usar desde fuera.'
-      : 'Cada tarjeta de red pertenece a una zona. En la matriz decides qué zona puede hablar con cuál.'}
-    icono="escudo"
-  />
-
-  <div class="tarjetas">
-    <Tarjeta etiqueta="Tarjetas de red" icono="red" valor={Object.keys(c.interfaces).length} detalle="{c.zonas.length} zonas" />
-    <Tarjeta etiqueta="Reglas activas" icono="cortafuegos" valor={c.reglas.filter((r) => r.activa).length} detalle="Además de las fijas" />
-    <Tarjeta etiqueta="Bloqueados" icono="escudo" valor={metrica('Bloqueados')?.valor ?? '—'} detalle="Paquetes desde el último arranque" />
-  </div>
-
   {#if config.una_interfaz}
     <SoloEntrada {api} {config} />
   {:else}
-    <Pestanas
-      pestanas={[
-        { id: 'matriz', titulo: 'Matriz' },
-        { id: 'interfaces', titulo: 'Tarjetas y zonas', contador: Object.keys(c.interfaces).length },
-        { id: 'ajustes', titulo: 'Ajustes generales' },
-      ]}
-      bind:activa={pestana}
-    />
-    {#if pestana === 'matriz'}
-      <p class="frase">
-        Pulsa una casilla para cambiar lo que pasa con ese tráfico o añadir excepciones. Las filas son de dónde sale
-        el tráfico y las columnas, a dónde va.
-      </p>
+    <EsquemaZonas {zonas} tarjetas={config.tarjetas_de_zona ?? {}} />
+
+    <section class="tarjeta">
+      <TablaZonas
+        {zonas}
+        tarjetas={config.tarjetas_de_zona ?? {}}
+        {sinZona}
+        oneditar={(z) => (panel = { tipo: 'zona', zona: z })}
+        oncrear={() => (panel = { tipo: 'zona', zona: null })}
+        onajustes={() => (panel = { tipo: 'ajustes' })}
+      />
+
       <Matriz
         {zonas}
+        {todas}
         celda={(o, d) => celdas[`${o}>${d}`]}
-        elegida={casilla ? `${casilla.origen}>${casilla.destino}` : ''}
-        onelegir={(o, d) => (casilla = { origen: o, destino: d })}
+        elegida={par ? `${par[0]}>${par[1]}` : ''}
+        onfiltrar={(o, d) => (par = o ? [o, d] : null)}
+        oneditar={(o, d) => (panel = { tipo: 'pareja', origen: o, destino: d })}
       />
-      <div class="leyenda">
-        <span><i class="v"></i> Permitir</span>
-        <span><i class="r"></i> Bloquear</span>
-        <span><b class="num">2</b> reglas propias</span>
-        <span><b class="punto">•</b> cambiada respecto a la de serie</span>
-      </div>
-      {#if c.zonas.some((z) => z.tipo === 'vpn')}
-        <Aviso tipo="info">
-          La VPN tiene dos llaves: aquí decides qué puede hacer la zona VPN entera, y en
-          <a href="/modulo/wireguard/clientes">WireGuard › Clientes</a> qué puede hacer cada cliente. El tráfico tiene
-          que estar permitido en los dos sitios.
-        </Aviso>
+
+      {#if politicas}
+        <ListaPoliticas {api} {config} datos={politicas} {par} {nombreZona} oneditar={editarRegla} oncrear={crearRegla} />
       {/if}
-    {:else if pestana === 'interfaces'}
-      <Interfaces {api} {config} />
-    {:else}
-      <Ajustes {api} {config} />
-    {/if}
+    </section>
   {/if}
 </div>
 
-{#if casilla}
-  <PanelCasilla {api} {config} origen={casilla.origen} destino={casilla.destino} oncerrar={() => (casilla = null)} />
+{#if panel?.tipo === 'zona'}
+  <PanelZona {api} {config} zona={panel.zona} lista={interfaces} oncerrar={() => (panel = null)} />
+{:else if panel?.tipo === 'pareja'}
+  <PanelPareja {api} {config} origen={panel.origen} destino={panel.destino} oncerrar={() => (panel = null)} />
+{:else if panel?.tipo === 'ajustes'}
+  <PanelAjustes {api} {config} oncerrar={() => (panel = null)} />
+{:else if panel?.tipo === 'politica'}
+  <FormPolitica {api} {config} origen={panel.origen} destino={panel.destino} regla={panel.regla} oncerrar={() => (panel = null)} />
 {/if}
 
 <style>
-  .tarjetas {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
-  }
-  .frase {
-    margin: 0;
-    color: var(--texto-2);
-  }
-  .leyenda {
+  .tarjeta {
     display: flex;
-    flex-wrap: wrap;
-    gap: 18px;
-    font-size: 12px;
-    color: var(--texto-2);
-  }
-  .leyenda span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .leyenda i {
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
-  }
-  .leyenda .v {
-    background: var(--verde-tinte);
-    border: 1px solid var(--verde);
-  }
-  .leyenda .r {
-    background: var(--rojo-tinte);
-    border: 1px solid var(--rojo);
-  }
-  .num {
-    min-width: 18px;
-    height: 18px;
-    border-radius: 9px;
-    background: var(--superficie-2);
-    font-size: 11px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .punto {
-    color: var(--azul);
+    flex-direction: column;
+    gap: 22px;
+    padding: 16px;
+    background: var(--fondo);
+    border: 1px solid var(--borde-suave);
+    border-radius: var(--radio);
   }
 </style>

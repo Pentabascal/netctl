@@ -6,11 +6,11 @@
   import { fw, aplicado, recargar, textoError } from './estado.svelte.js';
   import AsistenteInicial from './AsistenteInicial.svelte';
   import Zonas from './Zonas.svelte';
-  import Reenvios from './Reenvios.svelte';
+  import TablaPoliticas from './TablaPoliticas.svelte';
   import Grupos from './Grupos.svelte';
   import Registro from './Registro.svelte';
 
-  let { api, ruta = '', navegar } = $props();
+  let { api, ruta = '' } = $props();
 
   let config = $state(null); // respuesta de GET /config
   let error = $state('');
@@ -71,8 +71,8 @@
       </Aviso>
     </div>
   {/if}
-  {#if ruta === 'reenvios'}
-    <Reenvios {api} {config} {navegar} />
+  {#if ruta === 'tabla' || ruta === 'reenvios'}
+    <TablaPoliticas {api} {config} />
   {:else if ruta === 'grupos'}
     <Grupos {api} {config} />
   {:else if ruta === 'registro'}

@@ -3,7 +3,7 @@
 use crate::modelo::*;
 
 pub fn iface(nombre: &str, ip: &str) -> Iface {
-    Iface { nombre: nombre.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true }
+    Iface { nombre: nombre.into(), ips: vec![ip.parse().unwrap()], mac: None, activa: true, dinamicas: vec![] }
 }
 
 /// Router típico: eth0 a internet, eth1 LAN, wg0 VPN.
@@ -26,6 +26,7 @@ pub fn fijas() -> Fijas {
         ssh: 22,
         wg: vec![("wg0".into(), 51820)],
         ips_externas: vec!["203.0.113.4".parse().unwrap()],
+        paises: Default::default(),
     }
 }
 
@@ -38,6 +39,7 @@ pub fn reenvio(id: u64, ip: &str, externo: u16) -> Reenvio {
         externo: vec![RangoPuerto::uno(externo)],
         interno: None,
         wan: None,
+        wan_ip: None,
         desde: vec![],
         caduca: None,
         loopback: true,
@@ -58,8 +60,21 @@ pub fn regla(id: u64, o: &str, d: &str, accion: Accion) -> Regla {
         puertos: Puertos::Lista(vec![RangoPuerto::uno(80)]),
         origen: Direccion::Cualquiera,
         destino: Direccion::Cualquiera,
-        log: false,
+        ..Default::default()
+    }
+}
+
+pub fn nat(id: u64, tipo: TipoNat) -> ReglaNat {
+    ReglaNat {
+        id,
+        nombre: format!("nat {id}"),
+        tipo,
+        iface: None,
+        origen: Direccion::Cualquiera,
+        destino: Direccion::Cualquiera,
+        protocolo: Protocolo::Cualquiera,
+        puertos: Puertos::Cualquiera,
         activa: true,
-        notas: String::new(),
+        descripcion: String::new(),
     }
 }

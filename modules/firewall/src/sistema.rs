@@ -15,6 +15,25 @@ pub trait Sistema: Send + Sync {
         std::net::TcpStream::connect_timeout(&(ip, puerto).into(), std::time::Duration::from_secs(2)).is_ok()
     }
 
+    /// IPs de un nombre según el DNS del sistema (vacío si no resuelve).
+    fn resolver(&self, nombre: &str) -> Vec<std::net::IpAddr> {
+        use std::net::ToSocketAddrs;
+        let mut v: Vec<std::net::IpAddr> = (nombre, 0).to_socket_addrs().map(|a| a.map(|x| x.ip()).collect()).unwrap_or_default();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// Descarga `url` (https) en el fichero `destino`.
+    fn descargar(&self, url: &str, destino: &Path) -> Result<(), String> {
+        // Con tiempo máximo: una descarga colgada no puede dejar la base «descargando» siempre.
+        let agente: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(600))).build().into();
+        let mut r = agente.get(url).call().map_err(|e| format!("No se pudo descargar {url}: {e}"))?;
+        let mut f = std::fs::File::create(destino).map_err(|e| e.to_string())?;
+        std::io::copy(&mut r.body_mut().as_reader(), &mut f).map_err(|e| format!("La descarga de {url} se cortó: {e}"))?;
+        Ok(())
+    }
+
     /// Instante UNIX actual (segundos).
     fn ahora(&self) -> u64 {
         std::time::SystemTime::now()
@@ -56,6 +75,10 @@ pub struct Falso {
     pub reloj: Mutex<u64>,
     /// Puertos (ip:puerto) que responden a `conectar`.
     pub abiertos: Mutex<Vec<String>>,
+    /// Respuestas de `resolver`.
+    pub dns: Mutex<std::collections::HashMap<String, Vec<std::net::IpAddr>>>,
+    /// Ficheros que da `descargar` por URL.
+    pub descargas: Mutex<std::collections::HashMap<String, Vec<u8>>>,
 }
 
 impl Falso {
@@ -79,6 +102,12 @@ impl Falso {
             .filter_map(|(_, e)| e.clone())
             .collect()
     }
+    pub fn responder_dns(&self, nombre: &str, ips: &[&str]) {
+        self.dns.lock().unwrap().insert(nombre.into(), ips.iter().map(|i| i.parse().unwrap()).collect());
+    }
+    pub fn responder_descarga(&self, url: &str, datos: Vec<u8>) {
+        self.descargas.lock().unwrap().insert(url.into(), datos);
+    }
     pub fn limpiar(&self) {
         self.llamadas.lock().unwrap().clear();
     }
@@ -93,6 +122,13 @@ impl Sistema for Falso {
     }
     fn ahora(&self) -> u64 {
         *self.reloj.lock().unwrap()
+    }
+    fn descargar(&self, url: &str, destino: &Path) -> Result<(), String> {
+        let d = self.descargas.lock().unwrap().get(url).cloned().ok_or_else(|| format!("No se pudo descargar {url}: sin red"))?;
+        std::fs::write(destino, d).map_err(|e| e.to_string())
+    }
+    fn resolver(&self, nombre: &str) -> Vec<std::net::IpAddr> {
+        self.dns.lock().unwrap().get(nombre).cloned().unwrap_or_default()
     }
     fn conectar(&self, ip: std::net::IpAddr, puerto: u16) -> bool {
         self.abiertos.lock().unwrap().contains(&format!("{ip}:{puerto}"))
@@ -112,6 +148,8 @@ pub struct Rutas {
     pub proc_route: PathBuf,
     /// `/etc` (copia de /etc/firewalld y /etc/ufw al instalar)
     pub etc: PathBuf,
+    /// Ayudante `netctl-dpi` (junto al binario del módulo).
+    pub dpi: PathBuf,
 }
 
 impl Rutas {
@@ -122,6 +160,10 @@ impl Rutas {
             wireguard: "/etc/wireguard".into(),
             proc_route: "/proc/net/route".into(),
             etc: "/etc".into(),
+            dpi: std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("netctl-dpi")))
+                .unwrap_or_else(|| "netctl-dpi".into()),
         }
     }
 
@@ -132,6 +174,7 @@ impl Rutas {
             wireguard: raiz.join("etc/wireguard"),
             proc_route: raiz.join("proc/net/route"),
             etc: raiz.join("etc"),
+            dpi: raiz.join("bin/netctl-dpi"),
         }
     }
 }

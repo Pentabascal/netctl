@@ -1,146 +1,261 @@
 <script>
+  import Icono from './Icono.svelte';
   /**
-   * Matriz zona→zona del firewall: filas = desde dónde, columnas = hacia dónde. Cada casilla
-   * en verde (Permitir) o rojo (Bloquear) con el número de reglas propias.
+   * Matriz de zonas como la de UniFi: «Destino» arriba, «Origen» en vertical. Cada casilla dice
+   * «Permitir todo» o «Bloquear todo» y «(n)» si tiene reglas propias.
+   * Pulsar una casilla la elige (para filtrar la lista de debajo); otra vez, la suelta.
+   * El lápiz de la casilla elegida abre su política (`oneditar`).
    * `celda(o, d)` → { politica: 'permitir'|'bloquear', reglas: number, cambiada?: boolean }
    * @type {{ zonas: {id: string, nombre: string}[], celda: (o: string, d: string) => any,
-   *   elegida?: string, onelegir?: (o: string, d: string) => void }}
+   *   todas?: number, elegida?: string, onfiltrar?: (o: string|null, d: string|null) => void,
+   *   oneditar?: (o: string, d: string) => void }}
    */
-  let { zonas, celda, elegida = '', onelegir } = $props();
+  let { zonas, celda, todas = 0, elegida = '', onfiltrar, oneditar } = $props();
+  let completa = $state(false);
+
+  function pulsar(o, d) {
+    if (elegida === `${o}>${d}`) onfiltrar?.(null, null);
+    else onfiltrar?.(o, d);
+  }
 </script>
 
-<div class="nc-matriz" role="grid" aria-label="Qué zona puede hablar con cuál">
-  <table>
-    <thead>
-      <tr>
-        <th class="esquina"><span>Desde ↓</span><span>Hacia →</span></th>
-        {#each zonas as d (d.id)}<th scope="col">{d.nombre}</th>{/each}
-      </tr>
-    </thead>
-    <tbody>
-      {#each zonas as o (o.id)}
+{#snippet rejilla()}
+  <div class="nc-matriz" class:completa>
+    <span class="eje-x">Destino</span>
+    <span class="eje-y">Origen</span>
+    <table role="grid" aria-label="Qué zona puede hablar con cuál">
+      <thead>
         <tr>
-          <th scope="row">{o.nombre}</th>
-          {#each zonas as d (d.id)}
-            {@const c = celda(o.id, d.id)}
-            <td>
-              {#if c}
-                <button
-                  type="button"
-                  class="casilla {c.politica}"
-                  class:elegida={elegida === `${o.id}>${d.id}`}
-                  aria-label="{o.nombre} hacia {d.nombre}: {c.politica === 'permitir' ? 'permitido' : 'bloqueado'}, {c.reglas} reglas"
-                  onclick={() => onelegir?.(o.id, d.id)}
-                >
-                  <span class="pol">{c.politica === 'permitir' ? 'Permitir' : 'Bloquear'}</span>
-                  {#if c.reglas}<span class="num" title="Reglas propias">{c.reglas}</span>{/if}
-                  {#if c.cambiada}<span class="marca" title="Cambiada respecto a la de serie">•</span>{/if}
-                </button>
-              {:else}
-                <span class="nada" aria-hidden="true">—</span>
-              {/if}
-            </td>
-          {/each}
+          <th class="todas">
+            <button type="button" class:elegida={!elegida} onclick={() => onfiltrar?.(null, null)}>Todas las políticas ({todas})</button>
+          </th>
+          {#each zonas as d (d.id)}<th scope="col" class="cab">{d.nombre}</th>{/each}
         </tr>
-      {/each}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {#each zonas as o (o.id)}
+          <tr>
+            <th scope="row" class="cab">{o.nombre}</th>
+            {#each zonas as d (d.id)}
+              {@const c = celda(o.id, d.id)}
+              {@const sel = elegida === `${o.id}>${d.id}`}
+              <td>
+                {#if c}
+                  <div class="casilla {c.politica}" class:elegida={sel}>
+                    <button
+                      type="button"
+                      class="pulsar"
+                      aria-pressed={sel}
+                      aria-label="{o.nombre} hacia {d.nombre}: {c.politica === 'permitir' ? 'permitir todo' : 'bloquear todo'}, {c.reglas} reglas propias"
+                      onclick={() => pulsar(o.id, d.id)}
+                    >
+                      {c.politica === 'permitir' ? 'Permitir todo' : 'Bloquear todo'}{#if c.cambiada}<span class="marca" title="Cambiada respecto a la de serie">•</span>{/if}
+                    </button>
+                    {#if c.reglas}<span class="num" title="Reglas propias">({c.reglas})</span>{/if}
+                    {#if sel && oneditar}
+                      <button type="button" class="editar" title="Cambiar la política de {o.nombre} hacia {d.nombre}" aria-label="Cambiar la política" onclick={() => oneditar(o.id, d.id)}>
+                        <Icono nombre="editar" tam={13} />
+                      </button>
+                    {/if}
+                  </div>
+                {:else}
+                  <span class="nada" aria-hidden="true">—</span>
+                {/if}
+              </td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{/snippet}
+
+<div class="nc-matriz-caja">
+  <div class="titulo">
+    <button type="button" class="ampliar" title="Ver la matriz a pantalla completa" aria-label="Pantalla completa" onclick={() => (completa = true)}>
+      <Icono nombre="ampliar" tam={15} />
+    </button>
+    <b>Matriz de zonas</b><span class="pista">(pulsa una pareja de zonas para filtrar las políticas de debajo)</span>
+  </div>
+  {@render rejilla()}
 </div>
 
+{#if completa}
+  <div class="velo" role="dialog" aria-modal="true" aria-label="Matriz de zonas">
+    <div class="grande">
+      <div class="titulo">
+        <b>Matriz de zonas</b>
+        <button type="button" class="ampliar cerrar" aria-label="Cerrar" onclick={() => (completa = false)}><Icono nombre="cerrar" tam={16} /></button>
+      </div>
+      {@render rejilla()}
+    </div>
+  </div>
+{/if}
+
+<svelte:window onkeydown={(e) => completa && e.key === 'Escape' && (completa = false)} />
+
 <style>
+  .nc-matriz-caja {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .titulo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pista {
+    color: var(--texto-2);
+  }
+  .ampliar {
+    background: none;
+    border: 0;
+    color: var(--texto-2);
+    padding: 2px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .ampliar:hover {
+    color: var(--texto);
+  }
+  .cerrar {
+    margin-left: auto;
+  }
   .nc-matriz {
+    position: relative;
     overflow-x: auto;
-    border: 1px solid var(--borde);
+    border: 1px solid var(--borde-suave);
     border-radius: var(--radio);
-    background: var(--superficie);
+    padding: 30px 16px 16px 36px;
+  }
+  .eje-x {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--texto-2);
+  }
+  .eje-y {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translate(-50%, -50%) rotate(-90deg) translateY(50%);
+    color: var(--texto-2);
   }
   table {
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 2px;
     width: 100%;
-    min-width: 560px;
+    min-width: 640px;
+    table-layout: fixed;
   }
   th,
   td {
-    padding: 6px;
+    padding: 0;
+    height: 30px;
     text-align: center;
-    border-bottom: 1px solid var(--borde-suave);
+    font-weight: 400;
   }
-  thead th {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--texto-2);
-    padding: 10px 6px;
-  }
-  tbody th {
-    text-align: left;
-    padding-left: 14px;
-    font-weight: 500;
+  .cab {
+    background: var(--superficie);
+    border-radius: 3px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 6px;
   }
-  .esquina {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    font-size: 11px;
-    color: var(--texto-3);
-    font-weight: 500;
-    padding-left: 14px;
+  .todas button {
+    width: 100%;
+    height: 30px;
+    border: 0;
+    border-radius: 3px;
+    background: var(--superficie);
+    color: var(--enlace);
+    font: inherit;
+    cursor: pointer;
   }
-  tr:last-child th,
-  tr:last-child td {
-    border-bottom: 0;
+  .todas button.elegida {
+    background: var(--azul-tinte);
   }
   .casilla {
     position: relative;
-    width: 100%;
-    min-width: 92px;
-    height: 36px;
-    display: inline-flex;
+    height: 30px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    border-radius: var(--radio-pq);
+    gap: 4px;
+    border-radius: 3px;
     border: 1px solid transparent;
-    font: 500 12.5px var(--fuente);
-    cursor: pointer;
-    transition: border-color 0.12s, filter 0.12s;
   }
   .casilla.permitir {
     background: var(--verde-tinte);
-    color: var(--verde);
+    border-color: var(--verde-tinte);
   }
   .casilla.bloquear {
     background: var(--rojo-tinte);
-    color: var(--rojo);
+    border-color: var(--rojo-tinte);
+  }
+  .casilla.elegida {
+    border-color: var(--azul);
+  }
+  .pulsar {
+    flex: 1;
+    height: 100%;
+    background: none;
+    border: 0;
+    color: var(--texto);
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
   }
   .casilla:hover {
-    filter: brightness(1.2);
-  }
-  .casilla.elegida,
-  .casilla:focus-visible {
-    border-color: var(--azul);
-    outline: none;
+    filter: brightness(1.25);
   }
   .num {
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 9px;
-    background: var(--superficie-2);
+    position: absolute;
+    right: 8px;
+    color: var(--enlace);
+  }
+  .editar {
+    position: absolute;
+    left: 4px;
+    background: var(--fondo);
+    border: 0;
+    border-radius: 3px;
     color: var(--texto);
-    font-size: 11px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
   }
   .marca {
-    position: absolute;
-    top: 1px;
-    right: 6px;
     color: var(--azul);
+    margin-left: 3px;
   }
   .nada {
     color: var(--texto-3);
+  }
+  .velo {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(5, 6, 8, 0.7);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .grande {
+    width: min(1400px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    background: var(--fondo);
+    border-radius: var(--radio);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 </style>

@@ -27,6 +27,7 @@ export const NOMBRE_ZONA_TIPO = {
   gateway: 'Esta máquina (el propio servidor)',
   vpn: 'Dispositivos conectados por la VPN',
   dmz: 'Servidores expuestos que no deben ver tu red',
+  hotspot: 'Invitados: solo salen a internet (y usan el DHCP y el DNS de esta máquina)',
   personalizada: 'Zona creada por ti',
 };
 

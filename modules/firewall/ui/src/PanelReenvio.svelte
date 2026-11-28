@@ -1,29 +1,47 @@
 <script>
-  // Panel lateral de un reenvío: todo editable y explicado, más duplicar y borrar.
+  // Panel de un reenvío de puerto con los campos de UniFi, en su orden: nombre, interfaz WAN y su
+  // IP, puerto WAN, IP de destino («Elegir equipo»), puerto de destino, protocolo, origen y
+  // registro. Además lo nuestro: caducidad, NAT loopback y seguimiento por MAC (al elegir equipo).
+  // `reenvio` null = nuevo; con `ontipo` se ve el bloque «Tipo» para cambiar a Firewall o NAT.
   import { untrack } from 'svelte';
-  import { PanelLateral, Campo, CampoNumero, SelectorEquipo, Opcion, Boton, Aviso, Icono } from '@netctl/kit';
-  import { aplicado, textoError, redesDe, PROTOCOLOS, textoFalta } from './estado.svelte.js';
-  import { deReenvio, aReenvio, puertoUnico, CADUCA } from './reenvio.js';
+  import { PanelLateral, Bloque, Radios, Campo, CampoNumero, SelectorEquipo, Opcion, Boton, Aviso, Icono, Enlace } from '@netctl/kit';
+  import { aplicado, textoError, redesDe, textoFalta } from './estado.svelte.js';
+  import { deReenvio, aReenvio, formNuevo, puertoUnico, CADUCA, puertosUnifi, dePuertosUnifi } from './reenvio.js';
+  import { tiposDisponibles } from './tabla.js';
 
-  let { api, config, reenvio, oncerrar } = $props();
+  let { api, config, reenvio = null, ontipo = null, onasistente = null, oncerrar } = $props();
 
   const c = $derived(config.config);
   const redes = $derived(redesDe(c));
   const externas = $derived(c.zonas.filter((z) => z.tipo === 'externa').flatMap((z) => Object.entries(c.interfaces).filter(([, x]) => x === z.id).map(([i]) => i)));
 
-  let f = $state(untrack(() => deReenvio(reenvio)));
-  let puertosValidos = $state(true);
-  let fueraValido = $state(true);
+  let f = $state(untrack(() => (reenvio ? deReenvio(reenvio) : formNuevo())));
+  let p = $state(untrack(() => (reenvio ? puertosUnifi(reenvio) : { wanPuertos: '', destinoPuerto: '' })));
+  let wanValido = $state(true);
+  let destinoValido = $state(true);
   let comprobado = $state(null);
   let ocupado = $state(false);
   let error = $state('');
 
-  const unico = $derived(puertoUnico(f.puertos));
-  const datos = $derived(aReenvio(f));
+  const unico = $derived(puertoUnico(p.wanPuertos));
+  const datos = $derived(aReenvio({ ...f, ...dePuertosUnifi(p.wanPuertos, unico != null ? p.destinoPuerto : '') }));
+
+  // IPs de la WAN elegida (o de todas). Una IP guardada que ya no está se sigue viendo, marcada.
+  const ipsWan = $derived.by(() => {
+    const l = (config.ips_externas ?? []).filter((x) => !f.wan || x.iface === f.wan).map((x) => ({ valor: x.ip, texto: x.ip }));
+    if (f.wanIp && !l.some((x) => x.valor === f.wanIp)) l.push({ valor: f.wanIp, texto: `${f.wanIp} (ya no está)` });
+    return l;
+  });
+  $effect(() => {
+    f.wan;
+    untrack(() => {
+      if (f.wanIp && !(config.ips_externas ?? []).some((x) => x.ip === f.wanIp && (!f.wan || x.iface === f.wan))) f.wanIp = '';
+    });
+  });
 
   let t;
   $effect(() => {
-    const d = JSON.stringify({ ...datos, id: reenvio.id });
+    const d = JSON.stringify({ ...datos, id: reenvio?.id ?? 0 });
     clearTimeout(t);
     t = setTimeout(async () => {
       try {
@@ -38,9 +56,10 @@
     ocupado = true;
     error = '';
     try {
-      if (accion === 'guardar') aplicado(await api.put(`/reenvios/${reenvio.id}`, { reenvio: datos, revision: c.revision }));
+      const rev = { revision: c.revision };
+      if (accion === 'guardar') aplicado(reenvio ? await api.put(`/reenvios/${reenvio.id}`, { reenvio: datos, ...rev }) : await api.post('/reenvios', { reenvio: datos, ...rev }));
       else if (accion === 'borrar') aplicado(await api.del(`/reenvios/${reenvio.id}?revision=${c.revision}`));
-      else aplicado(await api.post(`/reenvios/${reenvio.id}/duplicar`, { revision: c.revision }));
+      else aplicado(await api.post(`/reenvios/${reenvio.id}/duplicar`, rev));
       oncerrar();
     } catch (e) {
       error = textoError(e);
@@ -50,105 +69,134 @@
   }
 
   const caducaOpciones = $derived(
-    f.caducaActual ? [{ valor: 'mantener', texto: `Como está (${reenvio.caduca_en ? 'en ' + textoFalta(reenvio.caduca_en) : 'ya caducó'})` }, ...CADUCA] : CADUCA,
+    f.caducaActual ? [{ valor: 'mantener', texto: `Como está (${reenvio?.caduca_en ? 'en ' + textoFalta(reenvio.caduca_en) : 'ya caducó'})` }, ...CADUCA] : CADUCA,
   );
   const errores = $derived(comprobado?.errores ?? []);
+  const faltas = $derived(
+    [!f.equipo && 'Elige el equipo de destino.', !p.wanPuertos.trim() && 'Escribe el puerto WAN.', (!wanValido || !destinoValido) && 'Revisa los puertos.'].filter(Boolean),
+  );
 </script>
 
-<PanelLateral abierto titulo={reenvio.nombre} subtitulo="Reenvío de puerto" icono="globo" ancho="560px" {oncerrar}>
-  <div class="form">
-    {#if reenvio.como_conectarse?.length}
-      <div class="como">
-        <Icono nombre="enlace" tam={15} />
-        <span>Desde fuera: {#each reenvio.como_conectarse as d, i (d)}{#if i}, {/if}<code>{d}</code>{/each}</span>
-      </div>
-    {/if}
+<PanelLateral abierto titulo={reenvio ? reenvio.nombre : 'Crear política'} subtitulo={reenvio ? 'Reenvío de puerto' : ''} icono={reenvio ? 'globo' : ''} {oncerrar}>
+  {#if !reenvio && ontipo}
+    <Bloque titulo="Tipo" ayuda="Firewall deja pasar o corta tráfico; NAT cambia direcciones; Reenvío de puertos abre un servicio de tu red a internet.">
+      <Radios valor="reenvio" opciones={tiposDisponibles(config.una_interfaz)} onchange={(v) => v !== 'reenvio' && ontipo(v)} />
+      {#if onasistente}<Enlace icono="info" onclick={onasistente}>¿Primera vez? Usa el asistente</Enlace>{/if}
+    </Bloque>
+  {/if}
 
-    <Campo etiqueta="Nombre" bind:valor={f.nombre} ayuda="Para reconocerlo en la lista." />
+  {#if reenvio?.como_conectarse?.length}
+    <div class="como">
+      <Icono nombre="enlace" tam={15} />
+      <span>Desde fuera: {#each reenvio.como_conectarse as d, i (d)}{#if i}, {/if}<code>{d}</code>{/each}</span>
+    </div>
+  {/if}
+
+  <Bloque>
+    <Campo etiqueta="Nombre" bind:valor={f.nombre} placeholder="Por ejemplo: Minecraft" ayuda="Para reconocerlo en la lista. Vacío = equipo y puerto." enfocar={!reenvio} />
+  </Bloque>
+
+  <Bloque titulo="Entrada desde internet" ayuda="Por dónde llega la conexión de fuera.">
+    {#if externas.length > 1}
+      <Radios
+        etiqueta="Interfaz WAN"
+        ayuda="Con varias conexiones a internet, por cuál se abre el puerto. «Todas» vale casi siempre."
+        bind:valor={f.wan}
+        opciones={[{ valor: '', texto: 'Todas' }, ...externas.map((i) => ({ valor: i, texto: i }))]}
+      />
+    {/if}
+    {#if ipsWan.length > 1 || f.wanIp}
+      <Radios
+        etiqueta="IP WAN"
+        ayuda="Si la conexión tiene varias IPs públicas, a cuál se llama desde fuera. «Todas» vale casi siempre."
+        bind:valor={f.wanIp}
+        opciones={[{ valor: '', texto: 'Todas' }, ...ipsWan]}
+      />
+    {/if}
+    <CampoNumero
+      etiqueta="Puerto WAN"
+      bind:valor={p.wanPuertos}
+      bind:valido={wanValido}
+      puertos
+      requerido
+      placeholder="Por ejemplo 25565"
+      ayuda="El puerto al que se llama desde internet: uno, varios separados por comas o un rango."
+      mas={{ ejemplo: '25565  ·  80, 443  ·  27015-27030' }}
+    />
+  </Bloque>
+
+  <Bloque titulo="Destino en tu red" ayuda="El equipo que da el servicio.">
     <SelectorEquipo
-      etiqueta="Equipo"
+      etiqueta="IP de destino"
       bind:valor={f.equipo}
       soloIpv4
       propias={redes.propias}
       conocidas={redes.conocidas}
-      ayuda="Si lo eliges de la lista, el reenvío le sigue aunque cambie de IP."
+      placeholder="Elegir equipo o escribir su IP"
+      ayuda="Si lo eliges de la lista, el reenvío le sigue aunque cambie de IP (por su MAC)."
     />
-    <div class="dos">
-      <CampoNumero
-        etiqueta="Puerto del equipo"
-        bind:valor={f.puertos}
-        bind:valido={puertosValidos}
-        puertos
-        requerido
-        ayuda="Puerto, lista o rango en el que escucha el servicio."
-        mas={{ ejemplo: '25565  ·  80, 443  ·  27015-27030' }}
-      />
-      <Campo etiqueta="Protocolo" tipo="select" bind:valor={f.protocolo} opciones={PROTOCOLOS} ayuda="Si no lo sabes, deja TCP y UDP." />
-    </div>
     {#if unico != null}
       <CampoNumero
-        etiqueta="Puerto de fuera (opcional)"
-        bind:valor={f.fuera}
-        bind:valido={fueraValido}
+        etiqueta="Puerto de destino"
+        bind:valor={p.destinoPuerto}
+        bind:valido={destinoValido}
         placeholder="El mismo: {unico}"
-        ayuda="El que se usa desde internet. Vacío = el mismo que el del equipo."
+        ayuda="En qué puerto escucha el equipo. Vacío = el mismo que el puerto WAN."
+        mas={{ ejemplo: 'WAN 2222 → destino 22 (SSH)' }}
       />
     {/if}
+    <Radios
+      etiqueta="Protocolo"
+      ayuda="TCP lo usan las webs y casi todo; UDP los juegos y la voz. Si no lo sabes, deja «TCP y UDP»."
+      bind:valor={f.protocolo}
+      opciones={[
+        { valor: 'tcp_udp', texto: 'TCP y UDP' },
+        { valor: 'tcp', texto: 'TCP' },
+        { valor: 'udp', texto: 'UDP' },
+      ]}
+    />
+  </Bloque>
 
-    <div class="campo">
-      <span class="etq">Desde dónde</span>
-      <div class="opciones" role="radiogroup" aria-label="Desde dónde">
-        <button type="button" role="radio" aria-checked={!f.soloAlgunas} class:elegida={!f.soloAlgunas} onclick={() => (f.soloAlgunas = false)}>Desde cualquier sitio de internet</button>
-        <button type="button" role="radio" aria-checked={f.soloAlgunas} class:elegida={f.soloAlgunas} onclick={() => (f.soloAlgunas = true)}>Solo desde estas IPs</button>
-      </div>
-    </div>
+  <Bloque>
+    <Radios
+      etiqueta="Origen"
+      ayuda="Quién puede usar el puerto. «Limitado» lo deja solo para las IPs, redes o rangos que digas: mucho más seguro."
+      valor={f.soloAlgunas ? 'limitado' : 'cualquiera'}
+      onchange={(v) => (f.soloAlgunas = v === 'limitado')}
+      opciones={[
+        { valor: 'cualquiera', texto: 'Cualquiera' },
+        { valor: 'limitado', texto: 'Limitado' },
+      ]}
+    />
     {#if f.soloAlgunas}
-      <SelectorEquipo bind:valor={f.desde} varios redes soloIpv4 equipos={[]} grupos={c.grupos_ip.map((g) => ({ id: g.id, nombre: g.nombre }))} placeholder="Escribe una IP, red o rango de internet" />
+      <SelectorEquipo bind:valor={f.desde} varios redes soloIpv4 equipos={[]} grupos={c.grupos_ip.map((g) => ({ id: g.id, nombre: g.nombre }))} placeholder="IP, red (198.51.100.0/24) o rango de internet" />
     {/if}
-    <Campo etiqueta="Caduca" tipo="select" bind:valor={f.caduca} opciones={caducaOpciones} ayuda="Al caducar se desactiva solo, sin borrarse." />
-
-    <h3 class="nc-seccion">Menos usado</h3>
-    {#if externas.length > 1}
-      <Campo
-        etiqueta="Conexión a internet (WAN) por la que entra"
-        tipo="select"
-        bind:valor={f.wan}
-        opciones={[{ valor: '', texto: 'Todas (recomendado)' }, ...externas.map((i) => ({ valor: i, texto: i }))]}
-        ayuda="Con varias conexiones a internet, por cuál se abre el puerto."
-      />
-    {/if}
+    <Campo etiqueta="Caduca" tipo="select" bind:valor={f.caduca} opciones={caducaOpciones} ayuda="Al caducar se desactiva solo, sin borrarse. Útil para abrir algo un rato." />
     <Opcion
-      titulo="Acceso desde dentro con la IP pública (recomendado)"
-      texto="Los equipos de tu red también llegan usando la dirección de internet, igual que desde fuera (NAT loopback, «hairpin»)."
+      titulo="Acceso desde dentro con la IP pública"
+      texto="Recomendado. Los equipos de tu red también llegan usando la dirección de internet, igual que desde fuera (NAT loopback)."
       bind:activo={f.loopback}
     />
-    <Opcion
-      titulo="Registrar conexiones (log)"
-      texto="Anota en el registro del sistema cada conexión nueva. Solo para investigar."
-      bind:activo={f.log}
-    />
+    <Opcion titulo="Registrar (log)" texto="Anota en el registro del sistema cada conexión nueva. Solo para investigar." bind:activo={f.log} />
     <Opcion titulo="Activo" texto="Apágalo para cerrar el puerto sin borrar el reenvío." bind:activo={f.activo} />
+  </Bloque>
 
-    {#each errores as e (e)}<Aviso tipo="error">{e}</Aviso>{/each}
-    {#each comprobado?.avisos ?? [] as a (a)}<Aviso tipo="aviso">{a}</Aviso>{/each}
-    {#if error}<Aviso tipo="error">{error}</Aviso>{/if}
+  {#each errores as e (e)}<Aviso tipo="error">{e}</Aviso>{/each}
+  {#each comprobado?.avisos ?? [] as a (a)}<Aviso tipo="aviso">{a}</Aviso>{/each}
+  {#if error}<Aviso tipo="error">{error}</Aviso>{/if}
 
-    <div class="pie">
+  {#snippet pie()}
+    {#if reenvio}
       <Boton variante="peligro" icono="papelera" desactivado={ocupado} onclick={() => hacer('borrar')}>Borrar</Boton>
       <Boton icono="copiar" desactivado={ocupado} onclick={() => hacer('duplicar')} titulo="El mismo servicio a otro equipo (sale desactivado)">Duplicar</Boton>
-      <span class="hueco"></span>
-      <Boton onclick={oncerrar}>Cancelar</Boton>
-      <Boton variante="primario" cargando={ocupado} desactivado={!puertosValidos || !fueraValido || !f.equipo || errores.length > 0} onclick={() => hacer('guardar')}>Guardar</Boton>
-    </div>
-  </div>
+    {/if}
+    <span class="hueco"></span>
+    <Boton onclick={oncerrar}>Cancelar</Boton>
+    <Boton variante="primario" cargando={ocupado} desactivado={faltas.length > 0 || errores.length > 0} titulo={faltas.join(' ')} onclick={() => hacer('guardar')}>Guardar</Boton>
+  {/snippet}
 </PanelLateral>
 
 <style>
-  .form {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
   .como {
     display: flex;
     align-items: center;
@@ -162,47 +210,6 @@
   code {
     font-family: var(--mono);
     color: var(--texto);
-  }
-  .dos {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .campo {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .etq {
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--texto-2);
-  }
-  .opciones {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-  }
-  .opciones button {
-    padding: 9px 10px;
-    background: var(--superficie-2);
-    border: 1px solid var(--borde);
-    border-radius: var(--radio-pq);
-    color: var(--texto);
-    font: inherit;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .opciones button.elegida {
-    border-color: var(--azul);
-    background: var(--azul-tinte);
-  }
-  .pie {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding-top: 8px;
-    border-top: 1px solid var(--borde-suave);
   }
   .hueco {
     flex: 1;

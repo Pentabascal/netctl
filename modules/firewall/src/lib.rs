@@ -4,7 +4,9 @@
 
 pub mod api;
 pub mod aplicar;
+pub mod dominios;
 pub mod estado;
+pub mod geo;
 pub mod leer;
 pub mod modelo;
 pub mod nft;
