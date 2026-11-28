@@ -42,9 +42,9 @@
     <span class="nombre">{z.nombre}</span>
     <div class="cajas">
       {#each tarjetas[z.id]?.length ? tarjetas[z.id] : [null] as t, i (t ?? i)}
-        <span class="tarjeta" class:vacia={!t}>
+        <span class="tarjeta" class:vacia={!t && z.tipo !== 'gateway'}>
           <Icono nombre={ICONO[z.tipo]} tam={18} />
-          <span>{t ?? 'Sin tarjetas'}</span>
+          <span>{t ?? (z.tipo === 'gateway' ? 'Este servidor' : 'Sin tarjetas')}</span>
         </span>
       {/each}
     </div>

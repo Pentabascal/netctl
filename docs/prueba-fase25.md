@@ -1,31 +1,41 @@
-# Prueba de la fase 2: Firewall (Debian, openSUSE, Rocky)
+# Prueba de la fase 2.5a: Firewall al estilo UniFi (Debian, openSUSE, Rocky)
 
 Prueba corta. Si algo sale distinto de lo que pone aquí, apunta el paso y lo que viste.
 
 ## 0. Publicar (una vez, en tu PC)
 
-La clave de firma anterior se perdió, así que hay una nueva y **el núcleo hay que
-reinstalarlo** en cada servidor (los núcleos 0.1.x no aceptan módulos firmados con la
-clave nueva).
+El Firewall 0.2.0 necesita el núcleo 0.3.0: hay que publicar los dos y **reinstalar el
+núcleo** en cada servidor.
 
-1. Herramientas: `rustup target add x86_64-unknown-linux-musl`, `minisign`, `gh`,
-   `cargo-deb`, `cargo-generate-rpm` y npm.
-2. Clave nueva (la privada **nunca** va al repo):
+```sh
+PATH=~/.cargo/bin:$PATH tools/publicar.sh nucleo
+PATH=~/.cargo/bin:$PATH tools/publicar.sh firewall
+```
 
-   ```sh
-   mkdir -p ~/.minisign
-   minisign -G -W -p crates/netctl-core/clave_publica.txt -s ~/.minisign/netctl.key
-   git add crates/netctl-core/clave_publica.txt && git commit -m "core: clave pública de firma nueva"
-   ```
+## A. Lo nuevo de la 2.5a (después de actualizar núcleo y Firewall)
 
-   Guarda una copia de `~/.minisign/netctl.key` fuera de este PC.
-3. Publica:
-
-   ```sh
-   PATH=~/.cargo/bin:$PATH tools/publicar.sh nucleo
-   PATH=~/.cargo/bin:$PATH tools/publicar.sh wireguard
-   PATH=~/.cargo/bin:$PATH tools/publicar.sh firewall
-   ```
+1. El Firewall ya no está en el menú de la izquierda. Ve a **Ajustes**: abajo sale
+   «Motor de políticas» con cuatro iconos (Zonas, Reenvío de puertos, Grupos, Registro).
+2. **Zonas**: arriba el esquema (Internet → Esta máquina → tus zonas), que se pliega con la
+   flecha y lo recuerda; debajo la tabla de zonas con candado en las de serie y una zona
+   nueva, **Hotspot (invitados)**.
+3. Pulsa una zona → marca una tarjeta → Guardar → confirma en 60 s. La tarjeta cambia de zona.
+4. «Crear zona» → «Cámaras» con una tarjeta libre → en la matriz, Cámaras solo llega a
+   Externa, a Esta máquina y a sí misma.
+5. Matriz: pulsa una casilla → la lista de debajo solo enseña esa pareja; vuelve a pulsarla o
+   pulsa «Todas las políticas» para quitar el filtro. El lápiz de la casilla elegida cambia
+   «Permitir todo / Bloquear todo» y deja «Volver a la de serie».
+6. «Crear política»: prueba origen **MAC** de un móvil → Bloquear → destino Externa →
+   Horario **Semanal** L–V 08:00–17:00 → Guardar y confirmar. Desde ese móvil, en ese horario,
+   no hay internet; fuera del horario, sí.
+7. Otra política: origen **Red** (una tarjeta), Protocolo **Otro 47**, Estado **Solo nuevas**.
+   Guarda: en «Ajustes del firewall» no hay errores y `nft list table inet netctl` la enseña.
+8. Lista: desmarca IPv6 (desaparecen las de «Solo IPv6»), busca por nombre, quita columnas
+   con el icono de columnas (lo recuerda al recargar), pausa una política con su interruptor y
+   prueba «Reordenar» (subir/bajar y Guardar orden).
+9. Conexión abierta cortada: SSH desde la red interna a un equipo de la DMZ, y crea
+   Interna→DMZ «Bloquear», puerto 22, Estado «A elegir: Establecida». La sesión abierta se corta;
+   **el panel y el SSH a esta máquina siguen funcionando**.
 
 ## 1. Actualizar el núcleo (en cada distro)
 

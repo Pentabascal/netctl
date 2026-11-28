@@ -1,6 +1,6 @@
 <script>
   /**
-   * Botón «?» con una explicación más larga, un ejemplo y el valor recomendado (§3b).
+   * Botón «i» (el «?» de §3b, con el aspecto de UniFi) con una explicación más larga, un ejemplo y el valor recomendado (§3b).
    * @type {{ texto?: string, ejemplo?: string, recomendado?: string, titulo?: string }}
    */
   let { texto = '', ejemplo = '', recomendado = '', titulo = 'Más información' } = $props();
@@ -26,7 +26,7 @@
     onclick={(e) => {
       e.preventDefault();
       abierto = !abierto;
-    }}>?</button
+    }}>i</button
   >
   {#if abierto}
     <span class="globo" role="note">
@@ -48,10 +48,10 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    border: 1px solid var(--borde-fuerte);
+    border: 1px solid var(--azul);
     background: transparent;
-    color: var(--texto-2);
-    font: 600 10.5px/1 var(--fuente);
+    color: var(--azul);
+    font: 600 10px/1 var(--fuente);
     cursor: pointer;
     padding: 0;
     display: inline-flex;
@@ -60,8 +60,7 @@
   }
   .boton:hover,
   .boton[aria-expanded='true'] {
-    border-color: var(--azul);
-    color: var(--azul);
+    background: var(--azul-tinte);
   }
   .globo {
     position: absolute;

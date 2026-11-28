@@ -1,6 +1,6 @@
 [package]
 name = "netctl-mod-firewall"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 description = "Módulo Firewall de netctl: zonas, matriz zona→zona y reenvío de puertos con nftables"
 
