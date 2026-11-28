@@ -48,6 +48,8 @@ fn proto_txt(p: Protocolo, dport: Option<&str>) -> String {
         (Protocolo::Tcp, None) => "meta l4proto tcp".into(),
         (Protocolo::Udp, None) => "meta l4proto udp".into(),
         (Protocolo::TcpUdp, None) => "meta l4proto { tcp, udp }".into(),
+        // Provisional: la Task 4 lo escribe con su número.
+        (Protocolo::Otro, _) => String::new(),
     }
 }
 

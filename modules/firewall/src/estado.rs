@@ -19,7 +19,11 @@ impl Almacen {
     fn cargar(&self, nombre: &str) -> Result<Option<Config>, String> {
         let ruta = self.dir.join(nombre);
         match std::fs::read_to_string(&ruta) {
-            Ok(t) => serde_json::from_str(&t).map(Some).map_err(|e| format!("{} no es válido: {e}", ruta.display())),
+            Ok(t) => {
+                let mut c: Config = serde_json::from_str(&t).map_err(|e| format!("{} no es válido: {e}", ruta.display()))?;
+                c.completar_zonas();
+                Ok(Some(c))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(format!("No se pudo leer {}: {e}", ruta.display())),
         }
@@ -66,6 +70,14 @@ mod tests {
         a.borrar_pendiente();
         assert!(a.cargar_pendiente().unwrap().is_none());
         a.borrar_pendiente();
+    }
+
+    #[test]
+    fn carga_de_fase2_trae_hotspot() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("confirmada.json"), include_str!("../tests/datos/fase2.json")).unwrap();
+        let c = Almacen::new(d.path()).cargar_confirmada().unwrap().unwrap();
+        assert!(c.zona("hotspot").is_some());
     }
 
     #[test]

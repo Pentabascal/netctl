@@ -21,14 +21,14 @@ fn main() {
     c.grupos_puertos.push(GrupoPuertos { id: 2, nombre: "Web".into(), puertos: vec![RangoPuerto::uno(80), RangoPuerto::uno(443)] });
     c.reglas.push(Regla { id: 3, nombre: "Web desde oficina".into(), origen_zona: "externa".into(), destino_zona: "gateway".into(),
         accion: Accion::Permitir, protocolo: Protocolo::Tcp, puertos: Puertos::Grupo(2), origen: Direccion::Grupo { id: 1 },
-        destino: Direccion::Cualquiera, log: true, activa: true, notas: String::new() });
+        destino: Direccion::Cualquiera, log: true, activa: true, ..Default::default() });
     c.reglas.push(Regla { id: 4, nombre: "DNS fuera".into(), origen_zona: "interna".into(), destino_zona: "externa".into(),
         accion: Accion::Rechazar, protocolo: Protocolo::TcpUdp, puertos: Puertos::Lista(vec![RangoPuerto::uno(53)]),
         origen: Direccion::Equipo { mac: "aa:bb:cc:dd:ee:ff".into(), ip: "192.168.1.50".parse().unwrap(), nombre: "tele".into() },
-        destino: Direccion::Cualquiera, log: false, activa: true, notas: String::new() });
+        destino: Direccion::Cualquiera, log: false, activa: true, ..Default::default() });
     c.reglas.push(Regla { id: 5, nombre: "Ping fuera no".into(), origen_zona: "gateway".into(), destino_zona: "dmz".into(),
         accion: Accion::Bloquear, protocolo: Protocolo::Icmp, puertos: Puertos::Cualquiera, origen: Direccion::Cualquiera,
-        destino: Direccion::Ip { red: "fd00::/8".parse().unwrap() }, log: false, activa: true, notas: String::new() });
+        destino: Direccion::Ip { red: "fd00::/8".parse().unwrap() }, log: false, activa: true, ..Default::default() });
     c.reenvios.push(Reenvio { id: 6, nombre: "Minecraft".into(), equipo: Direccion::Ip { red: "192.168.1.20/32".parse().unwrap() },
         protocolo: Protocolo::Tcp, externo: vec![RangoPuerto::uno(25565)], interno: None, wan: None, desde: vec![], caduca: None,
         loopback: true, activo: true, log: true, plantilla: None });

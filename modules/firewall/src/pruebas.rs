@@ -58,8 +58,6 @@ pub fn regla(id: u64, o: &str, d: &str, accion: Accion) -> Regla {
         puertos: Puertos::Lista(vec![RangoPuerto::uno(80)]),
         origen: Direccion::Cualquiera,
         destino: Direccion::Cualquiera,
-        log: false,
-        activa: true,
-        notas: String::new(),
+        ..Default::default()
     }
 }

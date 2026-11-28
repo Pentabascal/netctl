@@ -394,7 +394,7 @@ async fn config_trae_matriz() {
     pedir(&p, "PUT", "/politicas/interna/externa", Some(json!({"politica": "bloquear", "revision": revision(&p).await}))).await;
     let (_, v) = pedir(&p, "GET", "/config", None).await;
     let m = v["matriz"].as_array().unwrap();
-    assert_eq!(m.len(), 5 * 5 - 1, "todas las parejas menos gateway→gateway");
+    assert_eq!(m.len(), 6 * 6 - 1, "todas las parejas menos gateway→gateway");
     let c = |o: &str, d: &str| m.iter().find(|x| x["origen"] == o && x["destino"] == d).unwrap().clone();
     assert_eq!(c("externa", "gateway")["politica"], "bloquear");
     assert_eq!(c("externa", "gateway")["reglas"], 1);

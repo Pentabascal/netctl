@@ -191,7 +191,7 @@ pub fn usos_grupo(c: &Config, id: u64) -> Vec<String> {
 /// Familia de una dirección: Some(true)=IPv4, Some(false)=IPv6, None=las dos o cualquiera.
 fn familia(c: &Config, d: &Direccion) -> Option<bool> {
     match d {
-        Direccion::Cualquiera => None,
+        Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. } => None,
         Direccion::Equipo { ip, .. } => Some(ip.is_ipv4()),
         Direccion::Ip { red } => Some(red.addr().is_ipv4()),
         Direccion::Rango { desde, .. } => Some(desde.is_ipv4()),
@@ -236,7 +236,108 @@ pub fn validar_dir(c: &Config, d: &Direccion) -> Result<(), String> {
                 Err("Se usa un grupo de IPs que ya no existe: elige otro.".into())
             }
         }
+        Direccion::Interfaz { iface } => {
+            if es_iface(iface) && c.interfaces.contains_key(iface) {
+                Ok(())
+            } else {
+                Err(format!("La tarjeta «{}» ya no existe: elige otra.", crate::nombre_seguro(iface)))
+            }
+        }
+        Direccion::Mac { mac } => {
+            if es_mac(mac) {
+                Ok(())
+            } else {
+                Err(format!("La MAC «{}» no es válida: escríbela como aa:bb:cc:dd:ee:ff.", crate::nombre_seguro(mac)))
+            }
+        }
     }
+}
+
+/// Hora `HH:MM` de 00:00 a 23:59.
+pub fn es_hora(h: &str) -> bool {
+    let b = h.as_bytes();
+    b.len() == 5
+        && b[2] == b':'
+        && h[..2].parse::<u8>().is_ok_and(|x| x < 24 && b[0].is_ascii_digit() && b[1].is_ascii_digit())
+        && h[3..].parse::<u8>().is_ok_and(|x| x < 60 && b[3].is_ascii_digit() && b[4].is_ascii_digit())
+}
+
+fn errores_franja(f: &Franja, e: &mut Vec<String>) {
+    for h in [&f.desde, &f.hasta] {
+        if !es_hora(h) {
+            e.push(format!("La hora «{}» no es válida: usa HH:MM, por ejemplo 08:30.", h.chars().take(12).collect::<String>()));
+        }
+    }
+}
+
+fn errores_dias(d: &[u8], e: &mut Vec<String>) {
+    if d.is_empty() {
+        e.push("Elige al menos un día.".into());
+    } else if d.iter().any(|x| *x > 6) {
+        e.push("Los días van de lunes (0) a domingo (6).".into());
+    }
+}
+
+/// Errores del horario de una regla (sin el prefijo «Regla …»).
+pub fn errores_horario(h: &Horario) -> Vec<String> {
+    let mut e = vec![];
+    match h {
+        Horario::Siempre => {}
+        Horario::Diario(f) => errores_franja(f, &mut e),
+        Horario::Semanal { dias, franja } => {
+            errores_dias(dias, &mut e);
+            errores_franja(franja, &mut e);
+        }
+        Horario::UnaVez { inicio, fin } => {
+            if fin <= inicio {
+                e.push("El fin tiene que ser después del inicio.".into());
+            }
+        }
+        Horario::AMedida(tramos) => {
+            if tramos.is_empty() {
+                e.push("Añade al menos una franja.".into());
+            }
+            for t in tramos {
+                errores_dias(&t.dias, &mut e);
+                errores_franja(&t.franja, &mut e);
+            }
+        }
+    }
+    e
+}
+
+/// Errores de lo nuevo de la fase 2.5 (red/MAC, versión IP, horario), con el prefijo de la regla.
+fn errores_regla_25(c: &Config, r: &Regla) -> Vec<String> {
+    let mut e = vec![];
+    if matches!(r.destino, Direccion::Mac { .. }) {
+        e.push("La MAC solo se puede usar como origen.".to_string());
+    }
+    for (d, zona) in [(&r.origen, &r.origen_zona), (&r.destino, &r.destino_zona)] {
+        if let Direccion::Interfaz { iface } = d
+            && c.interfaces.get(iface).is_some_and(|z| z != zona)
+        {
+            let nombre = c.zona(zona).map(|z| z.nombre.as_str()).unwrap_or(zona);
+            e.push(format!("La tarjeta {} no es de la zona {nombre}.", crate::nombre_seguro(iface)));
+        }
+    }
+    let quiere = match r.version_ip {
+        VersionIp::Ambas => None,
+        VersionIp::V4 => Some(true),
+        VersionIp::V6 => Some(false),
+    };
+    if let Some(q) = quiere {
+        for d in [&r.origen, &r.destino] {
+            if let Some(f) = familia(c, d)
+                && f != q
+            {
+                e.push(if q { "Una IPv6 no casa con «Solo IPv4».".to_string() } else { "Una IPv4 no casa con «Solo IPv6».".to_string() });
+                break;
+            }
+        }
+    }
+    e.extend(errores_horario(&r.horario));
+    let n = &r.nombre;
+    e.into_iter().map(|x| format!("Regla «{n}»: {x}")).collect()
 }
 
 /// Todos los errores de la configuración completa.
@@ -289,11 +390,24 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
             }
             _ => {}
         }
+        if !r.protocolo.usa_puertos() && r.puertos_origen != Puertos::Cualquiera {
+            e.push(format!("La regla «{n}» tiene puertos de origen, pero el protocolo elegido no usa puertos: elige TCP, UDP o los dos."));
+        }
+        match &r.puertos_origen {
+            Puertos::Lista(l) if l.is_empty() || l.iter().any(|x| !rango_valido(x)) => {
+                e.push(format!("La regla «{n}» tiene puertos de origen no válidos: usa números del 1 al 65535."))
+            }
+            Puertos::Grupo(id) if !c.grupos_puertos.iter().any(|g| g.id == *id) => {
+                e.push(format!("La regla «{n}» usa un grupo de puertos que ya no existe."))
+            }
+            _ => {}
+        }
         for d in [&r.origen, &r.destino] {
             if let Err(x) = validar_dir(c, d) {
                 e.push(format!("Regla «{n}»: {x}"));
             }
         }
+        e.extend(errores_regla_25(c, r));
         if let (Some(a), Some(b)) = (familia(c, &r.origen), familia(c, &r.destino))
             && a != b
         {
@@ -302,7 +416,7 @@ pub fn validar(c: &Config, f: &Fijas) -> Vec<String> {
     }
     for g in &c.grupos_ip {
         for m in &g.miembros {
-            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera) {
+            if matches!(m, Direccion::Grupo { .. } | Direccion::Cualquiera | Direccion::Interfaz { .. } | Direccion::Mac { .. }) {
                 e.push(format!("El grupo «{}» solo puede tener equipos, IPs, redes o rangos.", g.nombre));
             } else if let Err(x) = validar_dir(c, m) {
                 e.push(format!("Grupo «{}»: {x}", g.nombre));
@@ -343,6 +457,75 @@ pub fn misma_familia(a: IpAddr, b: IpAddr) -> bool {
 mod tests {
     use super::*;
     use crate::pruebas::*;
+
+    fn errores_de(r: Regla) -> Vec<String> {
+        let mut c = router();
+        c.reglas.push(r);
+        validar(&c, &fijas())
+    }
+
+    #[test]
+    fn mac_solo_origen() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.destino = Direccion::Mac { mac: "aa:bb:cc:dd:ee:ff".into() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La MAC solo se puede usar como origen.".to_string()]);
+        r.destino = Direccion::Cualquiera;
+        r.origen = Direccion::Mac { mac: "aa:bb:cc:dd:ee:ff".into() };
+        assert!(errores_de(r.clone()).is_empty());
+        r.origen = Direccion::Mac { mac: "nada".into() };
+        assert_eq!(errores_de(r).len(), 1);
+    }
+
+    #[test]
+    fn red_de_otra_zona() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.origen = Direccion::Interfaz { iface: "eth0".into() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La tarjeta eth0 no es de la zona Interna.".to_string()]);
+        r.origen = Direccion::Interfaz { iface: "eth1".into() };
+        r.destino = Direccion::Interfaz { iface: "eth0".into() };
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn hora_invalida() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.horario = Horario::Diario(Franja { desde: "25:00".into(), hasta: "17:00".into() });
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: La hora «25:00» no es válida: usa HH:MM, por ejemplo 08:30.".to_string()]);
+        r.horario = Horario::Semanal { dias: vec![], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Elige al menos un día.".to_string()]);
+        r.horario = Horario::Semanal { dias: vec![0, 7], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        assert_eq!(errores_de(r.clone()).len(), 1);
+        r.horario = Horario::UnaVez { inicio: 2000, fin: 1000 };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: El fin tiene que ser después del inicio.".to_string()]);
+        r.horario = Horario::AMedida(vec![Tramo { dias: vec![5, 6], franja: Franja { desde: "22:00".into(), hasta: "06:00".into() } }]);
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn version_ip_choca() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.version_ip = VersionIp::V4;
+        r.origen = Direccion::Ip { red: "fd00::/64".parse().unwrap() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Una IPv6 no casa con «Solo IPv4».".to_string()]);
+        r.version_ip = VersionIp::V6;
+        r.origen = Direccion::Ip { red: "192.168.1.0/24".parse().unwrap() };
+        assert_eq!(errores_de(r.clone()), vec!["Regla «regla 1»: Una IPv4 no casa con «Solo IPv6».".to_string()]);
+        r.version_ip = VersionIp::Ambas;
+        assert!(errores_de(r).is_empty());
+    }
+
+    #[test]
+    fn protocolo_otro_y_puertos() {
+        let mut r = regla(1, "interna", "externa", Accion::Bloquear);
+        r.protocolo = Protocolo::Otro;
+        r.puertos = Puertos::Cualquiera;
+        for n in [0u8, 47, 255] {
+            r.numero_protocolo = n;
+            assert!(errores_de(r.clone()).is_empty());
+        }
+        r.puertos_origen = Puertos::Lista(vec![RangoPuerto::uno(53)]);
+        assert_eq!(errores_de(r).len(), 1);
+    }
 
     #[test]
     fn puertos_texto() {

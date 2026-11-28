@@ -1,0 +1,349 @@
+{
+ "revision": 1,
+ "zonas": [
+  {
+   "id": "externa",
+   "nombre": "Externa (internet)",
+   "tipo": "externa"
+  },
+  {
+   "id": "interna",
+   "nombre": "Interna",
+   "tipo": "interna"
+  },
+  {
+   "id": "gateway",
+   "nombre": "Esta máquina",
+   "tipo": "gateway"
+  },
+  {
+   "id": "vpn",
+   "nombre": "VPN",
+   "tipo": "vpn"
+  },
+  {
+   "id": "dmz",
+   "nombre": "DMZ",
+   "tipo": "dmz"
+  }
+ ],
+ "interfaces": {
+  "enp1s0": "externa",
+  "enp2s0": "interna",
+  "enp3s0": "dmz",
+  "wg0": "vpn"
+ },
+ "politicas": [
+  {
+   "origen": "externa",
+   "destino": "gateway",
+   "politica": "bloquear"
+  },
+  {
+   "origen": "dmz",
+   "destino": "interna",
+   "politica": "permitir"
+  }
+ ],
+ "reglas": [
+  {
+   "id": 4,
+   "nombre": "Cámaras sin internet",
+   "origen_zona": "interna",
+   "destino_zona": "externa",
+   "accion": "bloquear",
+   "protocolo": "cualquiera",
+   "puertos": {
+    "tipo": "cualquiera"
+   },
+   "origen": {
+    "tipo": "grupo",
+    "id": 2
+   },
+   "destino": {
+    "tipo": "cualquiera"
+   },
+   "log": false,
+   "activa": true,
+   "notas": "Que no manden vídeo a la nube del fabricante"
+  },
+  {
+   "id": 5,
+   "nombre": "Panel web de la DMZ desde la oficina",
+   "origen_zona": "externa",
+   "destino_zona": "gateway",
+   "accion": "permitir",
+   "protocolo": "tcp",
+   "puertos": {
+    "tipo": "grupo",
+    "valor": 3
+   },
+   "origen": {
+    "tipo": "grupo",
+    "id": 1
+   },
+   "destino": {
+    "tipo": "cualquiera"
+   },
+   "log": false,
+   "activa": true,
+   "notas": ""
+  },
+  {
+   "id": 6,
+   "nombre": "Impresora solo LAN",
+   "origen_zona": "vpn",
+   "destino_zona": "interna",
+   "accion": "rechazar",
+   "protocolo": "tcp",
+   "puertos": {
+    "tipo": "lista",
+    "valor": [
+     {
+      "desde": 9100,
+      "hasta": 9100
+     }
+    ]
+   },
+   "origen": {
+    "tipo": "cualquiera"
+   },
+   "destino": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:40",
+    "ip": "192.168.1.40",
+    "nombre": "Impresora"
+   },
+   "log": false,
+   "activa": false,
+   "notas": ""
+  }
+ ],
+ "grupos_ip": [
+  {
+   "id": 1,
+   "nombre": "Oficina",
+   "miembros": [
+    {
+     "tipo": "ip",
+     "red": "198.51.100.0/24"
+    },
+    {
+     "tipo": "rango",
+     "desde": "203.0.113.10",
+     "hasta": "203.0.113.20"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "nombre": "Cámaras",
+   "miembros": [
+    {
+     "tipo": "equipo",
+     "mac": "aa:bb:cc:00:00:30",
+     "ip": "192.168.1.30",
+     "nombre": "Cámara entrada"
+    }
+   ]
+  }
+ ],
+ "grupos_puertos": [
+  {
+   "id": 3,
+   "nombre": "Web",
+   "puertos": [
+    {
+     "desde": 80,
+     "hasta": 80
+    },
+    {
+     "desde": 443,
+     "hasta": 443
+    }
+   ]
+  }
+ ],
+ "reenvios": [
+  {
+   "id": 7,
+   "nombre": "Servidor-casa · Web",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:20",
+    "ip": "192.168.1.20",
+    "nombre": "Servidor-casa"
+   },
+   "protocolo": "tcp",
+   "externo": [
+    {
+     "desde": 80,
+     "hasta": 80
+    },
+    {
+     "desde": 443,
+     "hasta": 443
+    }
+   ],
+   "interno": null,
+   "wan": null,
+   "desde": [],
+   "caduca": null,
+   "loopback": true,
+   "activo": true,
+   "log": false,
+   "plantilla": "web"
+  },
+  {
+   "id": 8,
+   "nombre": "Servidor-casa · Minecraft",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:20",
+    "ip": "192.168.1.20",
+    "nombre": "Servidor-casa"
+   },
+   "protocolo": "tcp",
+   "externo": [
+    {
+     "desde": 25565,
+     "hasta": 25565
+    }
+   ],
+   "interno": null,
+   "wan": null,
+   "desde": [],
+   "caduca": null,
+   "loopback": true,
+   "activo": true,
+   "log": false,
+   "plantilla": "minecraft"
+  },
+  {
+   "id": 9,
+   "nombre": "PC juegos · Servidor de juegos",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:21",
+    "ip": "192.168.1.21",
+    "nombre": "PC juegos"
+   },
+   "protocolo": "tcp_udp",
+   "externo": [
+    {
+     "desde": 27015,
+     "hasta": 27030
+    }
+   ],
+   "interno": null,
+   "wan": null,
+   "desde": [],
+   "caduca": 1795885551,
+   "loopback": true,
+   "activo": true,
+   "log": false,
+   "plantilla": "juegos"
+  },
+  {
+   "id": 10,
+   "nombre": "Servidor-casa · Escritorio remoto",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:20",
+    "ip": "192.168.1.20",
+    "nombre": "Servidor-casa"
+   },
+   "protocolo": "tcp_udp",
+   "externo": [
+    {
+     "desde": 3390,
+     "hasta": 3390
+    }
+   ],
+   "interno": 3389,
+   "wan": null,
+   "desde": [
+    {
+     "tipo": "grupo",
+     "id": 1
+    }
+   ],
+   "caduca": null,
+   "loopback": true,
+   "activo": true,
+   "log": false,
+   "plantilla": "escritorio_remoto"
+  },
+  {
+   "id": 11,
+   "nombre": "Cámara entrada · Cámaras",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:30",
+    "ip": "192.168.1.30",
+    "nombre": "Cámara entrada"
+   },
+   "protocolo": "tcp",
+   "externo": [
+    {
+     "desde": 8554,
+     "hasta": 8554
+    }
+   ],
+   "interno": 554,
+   "wan": null,
+   "desde": [],
+   "caduca": null,
+   "loopback": true,
+   "activo": true,
+   "log": false,
+   "plantilla": "camaras"
+  },
+  {
+   "id": 12,
+   "nombre": "Portátil · SSH",
+   "equipo": {
+    "tipo": "equipo",
+    "mac": "aa:bb:cc:00:00:50",
+    "ip": "192.168.1.50",
+    "nombre": "Portátil"
+   },
+   "protocolo": "tcp",
+   "externo": [
+    {
+     "desde": 2222,
+     "hasta": 2222
+    }
+   ],
+   "interno": 22,
+   "wan": null,
+   "desde": [],
+   "caduca": null,
+   "loopback": true,
+   "activo": false,
+   "log": false,
+   "plantilla": "ssh"
+  }
+ ],
+ "nat": {
+  "dmz": true,
+  "interna": true,
+  "vpn": true
+ },
+ "ping_externo": true,
+ "sig_id": 12,
+ "direcciones": {
+  "enp1s0": [
+   "85.12.34.56/24"
+  ],
+  "enp2s0": [
+   "192.168.1.1/24"
+  ],
+  "enp3s0": [
+   "172.20.0.1/24"
+  ],
+  "wg0": [
+   "10.8.0.1/24"
+  ]
+ }
+}
