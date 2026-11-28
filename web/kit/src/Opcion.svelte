@@ -1,14 +1,17 @@
 <script>
   // Fila de ajuste con título, explicación y un interruptor a la derecha (estilo UniFi).
-  import { Interruptor } from '@netctl/kit';
+  import Interruptor from './Interruptor.svelte';
+  import Ayuda from './Ayuda.svelte';
   /** @type {{ titulo: string, texto?: string, activo?: boolean, desactivado?: boolean,
-   *   onchange?: (v: boolean) => void, children?: any }} */
-  let { titulo, texto = '', activo = $bindable(false), desactivado = false, onchange, children } = $props();
+   *   onchange?: (v: boolean) => void, children?: any, mas?: any }} */
+  let { titulo, texto = '', activo = $bindable(false), desactivado = false, onchange, children, mas } = $props();
 </script>
 
 <div class="opcion" class:apagada={desactivado}>
   <div class="textos">
-    <span class="titulo">{titulo}</span>
+    <span class="titulo"
+      >{titulo}{#if mas}<Ayuda texto={mas.texto} ejemplo={mas.ejemplo} recomendado={mas.recomendado} />{/if}</span
+    >
     {#if texto}<span class="texto">{texto}</span>{/if}
     {@render children?.()}
   </div>

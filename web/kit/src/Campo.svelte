@@ -1,4 +1,5 @@
 <script>
+  import Ayuda from './Ayuda.svelte';
   /**
    * Campo de formulario con etiqueta, ayuda y error (validación en castellano).
    * tipo: text | password | number | email | textarea | select
@@ -6,7 +7,9 @@
    *   ayuda?: string, error?: string, opciones?: {valor: any, texto: string}[], mono?: boolean,
    *   requerido?: boolean, desactivado?: boolean, soloLectura?: boolean, autocompletar?: string,
    *   min?: number, max?: number, filas?: number, enfocar?: boolean, sufijo?: string,
-   *   inputmode?: string, maxlength?: number, oninput?: (e: Event) => void, extra?: any }}
+   *   inputmode?: string, maxlength?: number, oninput?: (e: Event) => void, extra?: any,
+   *   mas?: { texto?: string, ejemplo?: string, recomendado?: string } }}
+   * `mas`: explicación larga que abre el «?» junto a la etiqueta.
    */
   let {
     etiqueta = '',
@@ -31,6 +34,8 @@
     maxlength,
     oninput,
     extra,
+    mas,
+    onblur,
   } = $props();
   const id = 'c-' + Math.random().toString(36).slice(2, 9);
 
@@ -41,7 +46,14 @@
 
 <div class="nc-campo" class:con-error={!!error}>
   {#if etiqueta}
-    <label for={id}>{etiqueta}{#if requerido}<span class="req" aria-hidden="true">*</span>{/if}</label>
+    <label for={id}
+      >{etiqueta}{#if requerido}<span class="req" aria-hidden="true">*</span>{/if}{#if mas}<Ayuda
+          texto={mas.texto}
+          ejemplo={mas.ejemplo}
+          recomendado={mas.recomendado}
+          titulo="Más sobre «{etiqueta}»"
+        />{/if}</label
+    >
   {/if}
   <div class="control" class:mono>
     {#if tipo === 'textarea'}
@@ -82,6 +94,7 @@
         aria-invalid={!!error}
         spellcheck="false"
         {oninput}
+        {onblur}
         use:foco
       />
     {/if}

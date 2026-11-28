@@ -1,8 +1,7 @@
 <script>
-  // WireGuard › Servidor: General / Intranet / Avanzado. Los cambios que reinician la VPN se avisan antes.
+  // WireGuard › Servidor: General / Intranet / Conexión y claves. Los cambios que reinician la VPN se avisan antes.
   import { onMount } from 'svelte';
-  import { Barra, Pestanas, Tarjeta, Campo, Boton, Aviso, Chip, Icono } from '@netctl/kit';
-  import Opcion from './Opcion.svelte';
+  import { Barra, Pestanas, Tarjeta, Campo, Boton, Aviso, Chip, Icono, Opcion, CampoNumero } from '@netctl/kit';
   import { CAMPOS_REINICIO, copiar } from './util.js';
 
   let { api, navegar } = $props();
@@ -199,7 +198,7 @@
       pestanas={[
         { id: 'general', titulo: 'General' },
         { id: 'intranet', titulo: 'Intranet', contador: datos.intranet.length },
-        { id: 'avanzado', titulo: 'Avanzado' },
+        { id: 'avanzado', titulo: 'Conexión y claves' },
       ]}
     />
 
@@ -220,7 +219,7 @@
           <div class="formulario">
             <div class="dos ancha">
               <Campo etiqueta="Dirección pública" bind:valor={form.endpoint} placeholder="vpn.midominio.es" ayuda="IP pública o dominio de este servidor visto desde internet." requerido />
-              <Campo etiqueta="Puerto UDP" bind:valor={form.puerto} inputmode="numeric" mono ayuda="Ábrelo en el router si estás detrás de uno." requerido />
+              <CampoNumero etiqueta="Puerto UDP" bind:valor={form.puerto} min={1} max={65535} ayuda="Ábrelo en el router si estás detrás de uno." requerido mas={{ texto: 'Puerto por el que escucha la VPN. Cambiarlo reinicia la VPN y hay que volver a importar la configuración en los clientes.', ejemplo: '51820', recomendado: '51820' }} />
             </div>
             <div class="dos">
               <Campo etiqueta="Red VPN" bind:valor={form.red_vpn} mono ayuda="Las IP de los clientes salen de aquí." requerido />
@@ -293,7 +292,7 @@
           <div class="formulario">
             <div class="dos">
               <Campo etiqueta="Nombre de la interfaz" bind:valor={form.interfaz} mono />
-              <Campo etiqueta="MTU" bind:valor={form.mtu} mono inputmode="numeric" placeholder="Automático" ayuda="Déjalo vacío salvo que haya problemas con webs que no cargan." />
+              <CampoNumero etiqueta="Tamaño máximo de paquete (MTU)" bind:valor={form.mtu} min={1280} max={9000} placeholder="Automático" ayuda="Déjalo vacío salvo que haya problemas con webs que no cargan." mas={{ texto: 'Si algunas webs se quedan cargando por la VPN, bajarlo suele arreglarlo.', ejemplo: '1380', recomendado: 'vacío (automático)' }} />
             </div>
           </div>
         </Tarjeta>

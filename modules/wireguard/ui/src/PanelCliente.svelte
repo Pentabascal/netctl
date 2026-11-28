@@ -1,8 +1,7 @@
 <script>
-  // Panel lateral de un cliente: General (conectar con QR / .conf), Acceso y Avanzado.
+  // Panel lateral de un cliente: General (conectar con QR / .conf), Acceso y Conexión.
   import { untrack } from 'svelte';
-  import { PanelLateral, Pestanas, Campo, Boton, Chip, Aviso, Interruptor, Icono, formatoBytes, formatoHace } from '@netctl/kit';
-  import Opcion from './Opcion.svelte';
+  import { PanelLateral, Pestanas, Campo, Boton, Chip, Aviso, Interruptor, Icono, formatoBytes, formatoHace, Opcion, CampoNumero } from '@netctl/kit';
   import { estadoCliente, formatoTasa, copiar } from './util.js';
 
   let { api, cliente = null, nuevo = false, intranet = [], revision, ahora, navegar, bienvenida = false, caida = false, oncambiado, oncerrar } = $props();
@@ -71,7 +70,7 @@
       : [
           { id: 'general', titulo: 'General' },
           { id: 'acceso', titulo: 'Acceso' },
-          { id: 'avanzado', titulo: 'Avanzado' },
+          { id: 'avanzado', titulo: 'Conexión' },
         ],
   );
 
@@ -333,12 +332,14 @@
           bind:activo={form.usar_psk}
         />
       </div>
-      <Campo
-        etiqueta="Keepalive"
+      <CampoNumero
+        etiqueta="Mantener viva la conexión (keepalive)"
         bind:valor={form.keepalive}
         sufijo="s"
-        inputmode="numeric"
+        min={0}
+        max={65535}
         ayuda="Mantiene abierta la conexión detrás de routers con NAT. 25 s va bien; 0 lo desactiva."
+        mas={{ texto: 'Cada cuántos segundos el dispositivo manda un paquete vacío para que el router no cierre la conexión. Sin él, el servidor no puede avisar al móvil si está en reposo.', ejemplo: '25', recomendado: '25 segundos' }}
       />
       <div class="nc-campo-falso">
         <span class="etq">Clave pública</span>

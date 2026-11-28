@@ -1,8 +1,7 @@
 <script>
   // Primer servidor WireGuard en 3 pasos (o importar un proyecto de wg-configurador).
   import { onMount } from 'svelte';
-  import { Tarjeta, Campo, Boton, Aviso, Icono } from '@netctl/kit';
-  import Opcion from './Opcion.svelte';
+  import { Tarjeta, Campo, Boton, Aviso, Icono, Opcion, CampoNumero } from '@netctl/kit';
 
   let { api, oncreado } = $props();
 
@@ -134,18 +133,20 @@
           bind:valor={f.endpoint}
           placeholder="vpn.midominio.es o 203.0.113.10"
           ayuda="La IP pública o el dominio con el que se llega a esta máquina desde internet."
+          mas={{ texto: 'Es la dirección que pondrán los móviles y portátiles para conectarse (Endpoint). Si tu IP pública cambia, usa un dominio de DNS dinámico.', ejemplo: 'vpn.midominio.es', recomendado: 'un dominio, si tienes uno' }}
           error={errEndpoint}
           enfocar
           requerido
         />
         <div class="dos">
-          <Campo
+          <CampoNumero
             etiqueta="Puerto UDP"
             bind:valor={f.puerto}
-            inputmode="numeric"
-            mono
+            min={1}
+            max={65535}
             error={errPuerto}
             ayuda="Si hay un router delante, redirige este puerto a esta máquina."
+            mas={{ texto: 'Puerto por el que escucha la VPN. Cualquiera libre vale; cámbialo solo si tu red bloquea el de serie.', ejemplo: '51820', recomendado: '51820' }}
           />
           <Campo
             etiqueta="Interfaz de salida"
@@ -157,8 +158,8 @@
         </div>
       {:else if paso === 1}
         <div class="dos">
-          <Campo etiqueta="Red VPN" bind:valor={f.red_vpn} mono error={errRed} ayuda="De aquí salen las IP de los clientes." />
-          <Campo etiqueta="DNS para los clientes" bind:valor={f.dns} mono ayuda="Opcional. Separa varios con comas." />
+          <Campo etiqueta="Red VPN" bind:valor={f.red_vpn} mono error={errRed} ayuda="De aquí salen las IP de los clientes." mas={{ texto: 'Una red privada que no uses en casa ni en la oficina. Caben tantos clientes como IPs tenga.', ejemplo: '10.8.0.0/24', recomendado: '10.8.0.0/24 (hasta 253 clientes)' }} />
+          <Campo etiqueta="DNS para los clientes" bind:valor={f.dns} mono ayuda="Opcional. Separa varios con comas." mas={{ texto: 'Servidores que usarán los clientes para traducir nombres a IPs mientras están conectados.', ejemplo: '1.1.1.1, 9.9.9.9', recomendado: 'el DNS de tu red si tienes uno; si no, 1.1.1.1' }} />
         </div>
         <div class="intranet">
           <div class="i-cabeza">
