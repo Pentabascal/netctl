@@ -62,23 +62,23 @@ Las de la 2.5a, más:
     - «Ya hay un reenvío («{n}») en el puerto {p}/{proto}.»;
     - «Para DNAT con puerto elige TCP o UDP.».
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `snat_antes_que_masquerade_automatico`: en `postrouting`, la posición de `snat ip to 203.0.113.5` es menor que la del `masquerade` de zona.
   - `dnat_con_puerto`: contiene `dnat ip to 192.168.1.10:8080`.
   - `dnat_choca_con_reenvio`.
   - `masquerade_no_duplica`.
   - En la API, `crear_nat_202`.
   - En `nft_real`, `nat_propio_carga`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `cargo test -p netctl-firewall nat 2>&1 | tail -10`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Pasan.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Pasan.**
 
   Run: `cargo test -p netctl-firewall 2>&1 | tail -5`
   Expected: verde.
-- [ ] **Step 5: Commit.** `feat(firewall): reglas NAT propias (masquerade, SNAT, DNAT)`
+- [x] **Step 5: Commit.** `feat(firewall): reglas NAT propias (masquerade, SNAT, DNAT)`
 
 ### Task 2: Reenvío con IP WAN, avisos y conflictos al reanudar
 
@@ -100,7 +100,7 @@ Las de la 2.5a, más:
   - `GET /config.ips_externas`: ahora `[{iface, ip, dinamica}]`.
   - 409 de reanudar: `{error: "No se puede reanudar: choca con «{otro}».", con: id}`.
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `aviso_ip_privada`;
   - `aviso_cgnat`;
   - `aviso_dinamica`;
@@ -108,16 +108,16 @@ Las de la 2.5a, más:
   - `ip_wan_desaparecida`;
   - `dnat_con_wan_ip`, que contiene `ip daddr 203.0.113.7`;
   - en la API, `reanudar_con_choque_409`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `cargo test -p netctl-firewall reenvio 2>&1 | tail -10`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Pasan.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Pasan.**
 
   Run: `cargo test -p netctl-firewall 2>&1 | tail -5`
   Expected: verde.
-- [ ] **Step 5: Commit.** `feat(firewall): reenvío con IP WAN, avisos NAT/CGNAT/IP dinámica y choque al reanudar`
+- [x] **Step 5: Commit.** `feat(firewall): reenvío con IP WAN, avisos NAT/CGNAT/IP dinámica y choque al reanudar`
 
 ### Task 3: API de la tabla unificada
 
@@ -141,16 +141,16 @@ Las de la 2.5a, más:
 
   Las políticas de serie salen agrupadas, como en `/politicas`.
 
-- [ ] **Step 1: Test que falla.** `tabla_junta_los_tres_tipos`: con una regla, un NAT y un reenvío, `tipo` cubre los tres valores y los ids no se repiten entre tipos.
-- [ ] **Step 2: Ver que falla.**
+- [x] **Step 1: Test que falla.** `tabla_junta_los_tres_tipos`: con una regla, un NAT y un reenvío, `tipo` cubre los tres valores y los ids no se repiten entre tipos.
+- [x] **Step 2: Ver que falla.**
 
   Run: `cargo test -p netctl-firewall --test api tabla`
   Expected: 404.
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Pasa.** Mismo comando.
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Pasa.** Mismo comando.
 
   Expected: PASS.
-- [ ] **Step 5: Commit.** `feat(firewall): /tabla con firewall, NAT y reenvíos`
+- [x] **Step 5: Commit.** `feat(firewall): /tabla con firewall, NAT y reenvíos`
 
 ### Task 4: Página Tabla de políticas y paneles de NAT y Reenvío
 
@@ -173,22 +173,22 @@ Las de la 2.5a, más:
   - `contadores(filas) -> {tipo:{firewall,nat,reenvio}, accion:{…}, protocolo:{…}, origen:{…}, destino:{…}}`, contando también las pausadas;
   - `aplicarFiltros(filas, filtros) -> filas`.
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `contadores_incluyen_pausadas`;
   - `filtrar_por_tipo_y_accion`;
   - `limpiar_filtros`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `node --test modules/firewall/ui/src/tabla.test.js`
   Expected: FAIL.
-- [ ] **Step 3: Implementar** la página:
+- [x] **Step 3: Implementar** la página:
   - filtros a la izquierda con su contador;
   - enlace «Ver las de serie (n)»;
   - tabla con columnas a elegir;
   - debajo, los enlaces «Reordenar» y «Crear política».
-- [ ] **Step 4: Pasan, compila y revisión visual.** Una captura de la tabla y otra del panel de reenvío, comparadas con `scratchpad/uni/capturas/30-tabla-politicas.png`.
+- [x] **Step 4: Pasan, compila y revisión visual.** Una captura de la tabla y otra del panel de reenvío, comparadas con `scratchpad/uni/capturas/30-tabla-politicas.png`.
 
   Run: `node --test modules/firewall/ui/src/ && npm --prefix modules/firewall/ui run build 2>&1 | tail -3`
   Expected: PASS.
-- [ ] **Step 5: Commit.** `feat(firewall-ui): Tabla de políticas unificada con NAT y reenvío al estilo UniFi`
-- [ ] **Step 6: Revisión final** con haiku (≤15 líneas) y correcciones con TDD.
+- [x] **Step 5: Commit.** `feat(firewall-ui): Tabla de políticas unificada con NAT y reenvío al estilo UniFi`
+- [x] **Step 6: Revisión final** con haiku (≤15 líneas) y correcciones con TDD.

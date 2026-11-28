@@ -132,6 +132,12 @@ pub fn choques_reenvio(c: &Config, f: &Fijas, r: &Reenvio) -> Vec<String> {
                 ));
             }
         }
+        for n in c.nat_propio.iter().filter(|n| n.activa && matches!(n.tipo, TipoNat::Dnat { .. }) && solapan(n.protocolo, r.protocolo)) {
+            if let Some(x) = rangos_de(c, &n.puertos).iter().find(|x| x.solapa(rango)) {
+                let comun = rango.desde.max(x.desde);
+                e.push(format!("El puerto {comun} ya lo usa la regla NAT «{}». Elige otro puerto de fuera.", n.nombre));
+            }
+        }
     }
     e
 }
@@ -507,6 +513,9 @@ pub fn errores_nat(c: &Config, n: &ReglaNat) -> Vec<String> {
         if let Err(x) = validar_dir(c, d) {
             e.push(x);
         }
+    }
+    if matches!(n.tipo, TipoNat::Dnat { .. }) && matches!(n.destino, Direccion::Interfaz { .. }) {
+        e.push("En DNAT el destino no puede ser una tarjeta: elige «Cualquiera» o una IP, y la tarjeta de entrada arriba.".into());
     }
     if matches!(n.destino, Direccion::Mac { .. }) {
         e.push("La MAC solo sirve como origen.".into());
@@ -890,5 +899,26 @@ mod tests {
         r.wan_ip = Some("2001:db8::1".parse().unwrap());
         c.reenvios.push(r);
         assert!(validar(&c, &fijas()).iter().any(|x| x.contains("IPv4")));
+    }
+
+    #[test]
+    fn dnat_destino_tarjeta_no() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.destino = Direccion::Interfaz { iface: "eth0".into() };
+        c.nat_propio.push(n);
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("En DNAT el destino no puede ser una tarjeta")), "{e:?}");
+    }
+
+    #[test]
+    fn reenvio_choca_con_dnat() {
+        let mut c = router();
+        let mut n = nat(10, TipoNat::Dnat { ip: "192.168.1.30".parse().unwrap(), puerto: None });
+        n.protocolo = Protocolo::Tcp;
+        n.puertos = Puertos::Lista(vec![RangoPuerto::uno(25565)]);
+        c.nat_propio.push(n);
+        let e = choques_reenvio(&c, &fijas(), &reenvio(9, "192.168.1.20", 25565));
+        assert!(e.iter().any(|x| x.contains("la regla NAT «nat 10»")), "{e:?}");
     }
 }
