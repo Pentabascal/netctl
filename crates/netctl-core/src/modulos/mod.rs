@@ -301,7 +301,18 @@ impl Gestor {
             .unwrap();
         let r = tokio::time::timeout(Duration::from_secs(10), crate::proxy::enviar(&self.rutas().socket(id), req)).await;
         if !matches!(r, Ok(Ok(ref resp)) if resp.status().is_success()) {
-            eprintln!("Aviso: el módulo {id} no respondió al aviso de desinstalación");
+            // Módulo colgado o parado: se le pide lo mismo ejecutando su binario
+            // (`netctl-mod-<id> desinstalar [--restaurar]`). Si no lo entiende, da igual.
+            eprintln!("Aviso: el módulo {id} no respondió al aviso de desinstalación; se usa su programa");
+            let mut orden = tokio::process::Command::new(self.rutas().binario(id));
+            orden.arg("desinstalar");
+            if restaurar {
+                orden.arg("--restaurar");
+            }
+            match tokio::time::timeout(Duration::from_secs(20), orden.status()).await {
+                Ok(Ok(st)) if st.success() => {}
+                otro => eprintln!("Aviso: «netctl-mod-{id} desinstalar» no terminó bien: {otro:?}"),
+            }
         }
         instalar::desinstalar(&self.entorno, id, borrar_datos)
             .await
@@ -947,6 +958,22 @@ mod tests {
         let e: serde_json::Value = serde_json::from_str(&v[0]).unwrap();
         assert_eq!(e["tipo"], "desinstalando");
         assert_eq!(e["restaurar"], true);
+        assert!(!g.rutas().dir_modulo("firewall").exists());
+    }
+
+    #[tokio::test]
+    async fn modulo_colgado_se_desinstala_por_su_binario() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let (g, _) = gestor(d.path(), "http://127.0.0.1:9/", None);
+        instalar::extraer(&tar_modulo("firewall", "0.1.0", "0.1.0"), &g.rutas().dir_modulo("firewall")).unwrap();
+        let marca = d.path().join("llamado");
+        let bin = g.rutas().binario("firewall");
+        std::fs::write(&bin, format!("#!/bin/sh\necho \"$@\" > {}\n", marca.display())).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Sin socket: el aviso por HTTP falla y se usa el binario.
+        g.desinstalar("firewall", false, true).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&marca).unwrap().trim(), "desinstalar --restaurar");
         assert!(!g.rutas().dir_modulo("firewall").exists());
     }
 

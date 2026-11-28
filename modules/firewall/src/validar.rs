@@ -197,7 +197,14 @@ fn familia(c: &Config, d: &Direccion) -> Option<bool> {
         Direccion::Rango { desde, .. } => Some(desde.is_ipv4()),
         Direccion::Grupo { id } => {
             let g = c.grupos_ip.iter().find(|g| g.id == *id)?;
-            let f: Vec<_> = g.miembros.iter().filter_map(|m| familia(c, m)).collect();
+            // Los grupos no se anidan (lo rechaza `validar`): un miembro grupo no cuenta, y así
+            // un grupo que se contiene a sí mismo no recurre sin fin.
+            let f: Vec<_> = g
+                .miembros
+                .iter()
+                .filter(|m| !matches!(m, Direccion::Grupo { .. }))
+                .filter_map(|m| familia(c, m))
+                .collect();
             if !f.is_empty() && f.iter().all(|x| *x == f[0]) { Some(f[0]) } else { None }
         }
     }
@@ -437,6 +444,18 @@ mod tests {
         r.origen = Direccion::Rango { desde: "192.168.1.1".parse().unwrap(), hasta: "fe80::1".parse().unwrap() };
         c.reglas[0] = r;
         assert!(!validar(&c, &fijas()).is_empty());
+    }
+
+    #[test]
+    fn grupo_dentro_de_si_mismo_no_revienta() {
+        let mut c = router();
+        c.grupos_ip.push(GrupoIp { id: 7, nombre: "Bucle".into(), miembros: vec![Direccion::Grupo { id: 7 }] });
+        let mut r = regla(1, "externa", "gateway", Accion::Permitir);
+        r.origen = Direccion::Grupo { id: 7 };
+        r.destino = Direccion::Ip { red: "192.168.1.1/32".parse().unwrap() };
+        c.reglas.push(r);
+        let e = validar(&c, &fijas());
+        assert!(e.iter().any(|x| x.contains("Bucle")), "{e:?}");
     }
 
     #[test]

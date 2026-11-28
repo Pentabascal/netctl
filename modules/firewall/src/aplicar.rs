@@ -149,8 +149,16 @@ impl Aplicador {
 
     /// Al arrancar el servicio: descarta lo pendiente y carga la última configuración confirmada.
     pub fn arrancar(&self, fijas_de: impl Fn(&Config) -> Fijas) -> Result<Option<Config>, String> {
+        let habia_pendiente = self.almacen.cargar_pendiente().ok().flatten().is_some();
         self.almacen.borrar_pendiente();
-        let Some(c) = self.almacen.cargar_confirmada()? else { return Ok(None) };
+        let Some(c) = self.almacen.cargar_confirmada()? else {
+            // Nunca se confirmó nada: si quedó un cambio a medias (p. ej. el asistente y un
+            // reinicio antes de confirmar), se quita y vuelve el firewall de antes.
+            if habia_pendiente {
+                restaurar_anterior(&*self.sistema, &self.rutas);
+            }
+            return Ok(None);
+        };
         let script = nft::generar(&c, &fijas_de(&c), self.sistema.ahora()).map_err(|e| e.join(" "))?;
         self.sistema.ejecutar("nft", &["-f", "-"], Some(&script)).map_err(|e| traducir_nft(&e))?;
         Ok(Some(c))
@@ -251,10 +259,17 @@ pub fn revisar_caducados(c: &mut Config, ahora: u64) -> Vec<String> {
 pub fn actualizar_ips(c: &mut Config, vecinos: &[Vecino]) -> Vec<String> {
     let mut mensajes = vec![];
     let mut tocar = |d: &mut Direccion| {
-        if let Direccion::Equipo { mac, ip, nombre } = d
-            && let Some(v) = vecinos
+        // Solo se sigue al equipo si su MAC aparece conectada en una única IP de la misma
+        // familia: con varias (alguien suplanta la MAC) o con entradas viejas no se toca nada.
+        let candidatos = |mac: &str, ip: &std::net::IpAddr| -> Vec<&Vecino> {
+            vecinos
                 .iter()
-                .find(|v| v.mac.eq_ignore_ascii_case(mac) && v.ip.is_ipv4() == ip.is_ipv4() && v.ip != *ip)
+                .filter(|v| v.conectado && v.mac.eq_ignore_ascii_case(mac) && v.ip.is_ipv4() == ip.is_ipv4())
+                .collect()
+        };
+        if let Direccion::Equipo { mac, ip, nombre } = d
+            && let [v] = candidatos(mac, ip).as_slice()
+            && v.ip != *ip
         {
             mensajes.push(format!("La IP de «{nombre}» cambió de {ip} a {}: las reglas se han actualizado.", v.ip));
             *ip = v.ip;
@@ -372,6 +387,37 @@ mod tests {
         assert_eq!(c, buena);
         assert!(a.almacen.cargar_pendiente().unwrap().is_none());
         assert!(s.entradas("nft -f")[0].contains("\t\ticmp type echo-request accept"));
+    }
+
+    #[tokio::test]
+    async fn arranque_sin_confirmada_quita_lo_pendiente() {
+        // Primer cambio (asistente) sin confirmar y el servicio se reinicia dentro de los 60 s.
+        let (d, s, a) = montar(60_000);
+        let r = Rutas::en(d.path());
+        s.responder("systemctl is-active firewalld", Ok("active\n"));
+        traspaso_inicial(&*s, &r);
+        a.aplicar(&router(), &fijas(), "admin", "asistente", true).unwrap();
+        s.limpiar();
+        let a2 = Aplicador::new(s.clone(), r.clone(), Duration::from_secs(60));
+        assert!(a2.arrancar(|_| fijas()).unwrap().is_none());
+        let o = s.ordenes();
+        assert!(o.contains(&"nft delete table inet netctl".to_string()), "{o:?}");
+        assert!(o.contains(&"systemctl enable --now firewalld".to_string()), "{o:?}");
+        assert!(a2.almacen.cargar_pendiente().unwrap().is_none());
+    }
+
+    #[test]
+    fn mac_repetida_o_vieja_no_cambia_ip() {
+        let mut c = router();
+        let mut r = reenvio(1, "192.168.1.20", 80);
+        r.equipo = Direccion::Equipo { mac: "aa:bb:cc:dd:ee:ff".into(), ip: "192.168.1.20".parse().unwrap(), nombre: "NAS".into() };
+        c.reenvios.push(r);
+        let v = |ip: &str, conectado| Vecino { ip: ip.parse().unwrap(), mac: "aa:bb:cc:dd:ee:ff".into(), iface: "eth1".into(), conectado };
+        // dos IPs con la misma MAC (alguien la suplanta): no se toca
+        assert!(actualizar_ips(&mut c, &[v("192.168.1.20", true), v("192.168.1.66", true)]).is_empty());
+        // solo una entrada vieja (no conectada): no se toca
+        assert!(actualizar_ips(&mut c, &[v("192.168.1.66", false)]).is_empty());
+        assert!(nft::generar(&c, &fijas(), 0).unwrap().contains("dnat ip to 192.168.1.20"));
     }
 
     #[tokio::test]
