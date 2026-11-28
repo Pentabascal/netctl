@@ -170,9 +170,11 @@ impl Estado {
         // recarga de la tabla, o el «deshacer» de los 60 s, los deja vacíos).
         if let Ok(Some(c)) = self.actual() {
             let (s2, yo) = (s.clone(), self.dominios.clone());
+            // El DNS puede tardar: se trabaja sobre una copia para no tener el cerrojo cogido.
             let _ = tokio::task::spawn_blocking(move || {
-                let mut cache = yo.lock().unwrap();
-                crate::dominios::refrescar(&c, &*s2, &mut cache);
+                let mut copia = yo.lock().unwrap().clone();
+                crate::dominios::refrescar(&c, &*s2, &mut copia);
+                *yo.lock().unwrap() = copia;
             })
             .await;
         }

@@ -22,12 +22,6 @@ struct Protocolo {
     resto: [u8; 508],
 }
 
-impl Protocolo {
-    fn vacio() -> Self {
-        Self { master: 0, app: 0, resto: [0; 508] }
-    }
-}
-
 type FnRevision = unsafe extern "C" fn() -> *const c_char;
 // La 6.x pide además el tipo de licencia; a la 4.14 y la 5.x el segundo argumento les sobra.
 type FnInit = unsafe extern "C" fn(*mut c_void, c_int) -> *mut c_void;
@@ -37,8 +31,6 @@ type FnProcesar = unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, u16,
 type FnLiberarFlujo = unsafe extern "C" fn(*mut c_void);
 type FnNombre = unsafe extern "C" fn(*mut c_void, u16) -> *const c_char;
 type FnNum = unsafe extern "C" fn(*mut c_void) -> c_uint;
-type FnCategoria = unsafe extern "C" fn(*mut c_void, Protocolo) -> c_int;
-type FnNombreCategoria = unsafe extern "C" fn(*mut c_void, c_int) -> *const c_char;
 type FnSalir = unsafe extern "C" fn(*mut c_void);
 
 /// Licencia «para un proyecto con ánimo de lucro, solo componentes LGPL» (6.x).
@@ -52,8 +44,6 @@ pub struct Ndpi {
     liberar: FnLiberarFlujo,
     nombre: FnNombre,
     num: FnNum,
-    categoria: Option<FnCategoria>,
-    nombre_categoria: Option<FnNombreCategoria>,
     salir: FnSalir,
     pub version: String,
     /// Último resultado por conexión (para rendirse con lo que se sabía) y memoria del flujo.
@@ -99,8 +89,6 @@ impl Ndpi {
                 liberar: sim(&lib, b"ndpi_free_flow_data\0")?,
                 nombre: sim(&lib, b"ndpi_get_proto_name\0")?,
                 salir: sim(&lib, b"ndpi_exit_detection_module\0")?,
-                categoria: sim(&lib, b"ndpi_get_proto_category\0").ok(),
-                nombre_categoria: sim(&lib, b"ndpi_category_get_name\0").ok(),
                 num,
                 tam_flujo: tam() as usize,
                 modulo: init(std::ptr::null_mut(), LICENCIA_LGPL),
@@ -127,15 +115,9 @@ impl Ndpi {
                 if nombre.is_empty() || nombre == "Unknown" {
                     return None;
                 }
-                let categoria = match (self.categoria, self.nombre_categoria) {
-                    (Some(c), Some(nc)) => {
-                        let mut p = Protocolo::vacio();
-                        p.app = id;
-                        texto(unsafe { nc(self.modulo, c(self.modulo, p)) })
-                    }
-                    _ => String::new(),
-                };
-                Some(App { id, nombre, categoria })
+                // La categoría se pide con `ndpi_protocol` por valor, cuyo tamaño cambia entre
+                // versiones: no se arriesga.
+                Some(App { id, nombre, categoria: String::new() })
             })
             .collect()
     }

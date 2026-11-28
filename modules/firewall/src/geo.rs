@@ -74,7 +74,41 @@ pub fn analizar(csv: &str) -> Result<Base, String> {
     if n == 0 {
         return Err("La base de países está vacía.".into());
     }
+    // nft rechaza elementos solapados en un conjunto con intervalos: se ordenan y se juntan.
+    for (v4, v6) in m.values_mut() {
+        *v4 = juntar(std::mem::take(v4));
+        *v6 = juntar(std::mem::take(v6));
+    }
     Ok(m)
+}
+
+/// Ordena y une rangos que se solapan o se tocan.
+fn juntar<T: Ord + Copy + num_siguiente::Siguiente>(mut v: Vec<(T, T)>) -> Vec<(T, T)> {
+    v.sort();
+    let mut r: Vec<(T, T)> = Vec::with_capacity(v.len());
+    for (a, b) in v {
+        match r.last_mut() {
+            Some(u) if a <= u.1 || u.1.siguiente() == Some(a) => u.1 = u.1.max(b),
+            _ => r.push((a, b)),
+        }
+    }
+    r
+}
+
+mod num_siguiente {
+    pub trait Siguiente: Sized {
+        fn siguiente(self) -> Option<Self>;
+    }
+    impl Siguiente for u32 {
+        fn siguiente(self) -> Option<Self> {
+            self.checked_add(1)
+        }
+    }
+    impl Siguiente for u128 {
+        fn siguiente(self) -> Option<Self> {
+            self.checked_add(1)
+        }
+    }
 }
 
 /// Elementos de nft de un país.
@@ -228,6 +262,9 @@ mod tests {
         assert_eq!(v6, vec!["2a01:c500::-2a01:c51f:ffff:ffff:ffff:ffff:ffff:ffff"]);
         assert_eq!(textos(&b["FR"]).0, vec!["2.140.0.0-2.140.0.255"]);
         assert!(analizar("1.0.0.0,1.0.0.255,es").is_err());
+        // desordenados y solapados: se juntan (nft no acepta solapes)
+        let b = analizar("10.0.0.50,10.0.0.80,XX\n10.0.0.0,10.0.0.60,XX\n10.0.0.81,10.0.0.90,XX\n10.0.1.0,10.0.1.0,XX").unwrap();
+        assert_eq!(textos(&b["XX"]).0, vec!["10.0.0.0-10.0.0.90", "10.0.1.0"]);
         assert!(analizar("").is_err());
     }
 

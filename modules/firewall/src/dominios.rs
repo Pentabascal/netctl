@@ -14,7 +14,7 @@ pub const DURA: u64 = 3600;
 pub const CADA: u64 = 300;
 
 /// IPs vistas por regla: id → (ip → último instante en que el DNS la dio).
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Cache {
     pub ips: BTreeMap<u64, BTreeMap<IpAddr, u64>>,
     pub ultima: Option<u64>,

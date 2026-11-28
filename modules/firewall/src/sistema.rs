@@ -26,7 +26,9 @@ pub trait Sistema: Send + Sync {
 
     /// Descarga `url` (https) en el fichero `destino`.
     fn descargar(&self, url: &str, destino: &Path) -> Result<(), String> {
-        let mut r = ureq::get(url).call().map_err(|e| format!("No se pudo descargar {url}: {e}"))?;
+        // Con tiempo máximo: una descarga colgada no puede dejar la base «descargando» siempre.
+        let agente: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(600))).build().into();
+        let mut r = agente.get(url).call().map_err(|e| format!("No se pudo descargar {url}: {e}"))?;
         let mut f = std::fs::File::create(destino).map_err(|e| e.to_string())?;
         std::io::copy(&mut r.body_mut().as_reader(), &mut f).map_err(|e| format!("La descarga de {url} se cortó: {e}"))?;
         Ok(())

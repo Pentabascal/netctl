@@ -56,22 +56,22 @@ Las de la 2.5a, más:
   - Mensaje: «El dominio «{n}» no es válido.» (validación de etiquetas RFC 1123, máximo 253 caracteres).
   - Aviso: «No se pudo resolver «{n}»; se reintenta en 5 minutos.».
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `dominio_genera_conjuntos`;
   - `refrescar_anade_elementos`: con `Falso`, se comprueba la orden nft;
   - `dominio_sin_resolver`;
   - `dominio_invalido`;
   - en `nft_real`, `dominio_carga`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `cargo test -p netctl-firewall dominio 2>&1 | tail -8`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Pasan.**
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Pasan.**
 
   Run: `cargo test -p netctl-firewall 2>&1 | tail -5`
   Expected: verde.
-- [ ] **Step 5: Commit.** `feat(firewall): destino por dominio con conjuntos nft que se refrescan`
+- [x] **Step 5: Commit.** `feat(firewall): destino por dominio con conjuntos nft que se refrescan`
 
 ### Task 2: Destino por País (db-ip lite)
 
@@ -93,22 +93,22 @@ Las de la 2.5a, más:
   - En el script, los conjuntos `pais_{cc}_4` y `pais_{cc}_6` (`flags interval`), solo para los países usados.
   - Aviso: «Descargando la base de países…; la regla se aplicará al terminar.».
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `analiza_y_une_rangos`;
   - `url_del_mes`;
   - `csv_roto_conserva_anterior`;
   - `pais_sin_base_aviso`;
   - `pais_genera_conjunto`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `cargo test -p netctl-firewall geo 2>&1 | tail -8`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.**
-- [ ] **Step 4: Pasan**, más una prueba real a mano (sin commit) que descarga el mes actual y comprueba que `ES` tiene rangos.
+- [x] **Step 3: Implementar.**
+- [x] **Step 4: Pasan**, más una prueba real a mano (sin commit) que descarga el mes actual y comprueba que `ES` tiene rangos.
 
   Run: `cargo test -p netctl-firewall 2>&1 | tail -5`
   Expected: verde.
-- [ ] **Step 5: Commit.** `feat(firewall): destino por país con la base libre de db-ip`
+- [x] **Step 5: Commit.** `feat(firewall): destino por país con la base libre de db-ip`
 
 ### Task 3: Destino por App (nDPI + NFQUEUE)
 
@@ -145,22 +145,22 @@ Las de la 2.5a, más:
     - las reglas App comparan `ct mark { ids }`;
     - la cola marca `meta mark = 0x10000 | app`, y las reglas comparan con ese desplazamiento.
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `cola_con_bypass`: el script contiene `queue num 100 bypass`;
   - `app_compara_ct_mark`;
   - `sin_reglas_app_sin_cola`;
   - `version_ndpi_no_soportada` (con una revisión simulada en `Ndpi::comprobar_version("3.4")`);
   - `clasificador_falso_marca`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `cargo test -p netctl-firewall dpi 2>&1 | tail -8`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.** Instala libndpi en este PC (Arch: `ndpi`; pide al usuario `! sudo pacman -S ndpi`) para la prueba manual de `Ndpi::cargar()` y de que clasifica una captura `.pcap` de ejemplo de nDPI (sin commit del pcap si tiene licencia distinta).
-- [ ] **Step 4: Pasan.**
+- [x] **Step 3: Implementar.** Instala libndpi en este PC (Arch: `ndpi`; pide al usuario `! sudo pacman -S ndpi`) para la prueba manual de `Ndpi::cargar()` y de que clasifica una captura `.pcap` de ejemplo de nDPI (sin commit del pcap si tiene licencia distinta).
+- [x] **Step 4: Pasan.**
 
   Run: `cargo test -p netctl-firewall 2>&1 | tail -5`
   Expected: verde.
-- [ ] **Step 5: Commit.** `feat(firewall): destino por app con nDPI cargado en tiempo de ejecución`
+- [x] **Step 5: Commit.** `feat(firewall): destino por app con nDPI cargado en tiempo de ejecución`
 
 ### Task 4: Interfaz de Dominio, País y App
 
@@ -176,21 +176,28 @@ Las de la 2.5a, más:
 - Consumes: `GET /geo` y `GET /apps`.
 - Produces: `opcionesDestino(zona, {geo, apps})` añade Dominio, País y App. Si `/apps` dice `disponible: false`, App va desactivada con el motivo en su «i». Solo se ofrecen con una zona de destino Externa.
 
-- [ ] **Step 1: Tests que fallan.**
+- [x] **Step 1: Tests que fallan.**
   - `ida y vuelta con dominio, país y app`;
   - `app desactivada con motivo`;
   - `solo hacia externa`.
-- [ ] **Step 2: Ver que fallan.**
+- [x] **Step 2: Ver que fallan.**
 
   Run: `node --test modules/firewall/ui/src/politica.test.js`
   Expected: FAIL.
-- [ ] **Step 3: Implementar.**
+- [x] **Step 3: Implementar.**
   - **Dominio:** chips con validación.
   - **País:** buscador con bandera emoji, nombre en español (`Intl.DisplayNames('es', {type:'region'})`) y la atribución de DB-IP.
   - **App:** buscador por nombre y categoría.
-- [ ] **Step 4: Pasan, compila y revisión visual** (una captura del panel).
+- [x] **Step 4: Pasan, compila y revisión visual** (una captura del panel).
 
   Run: `node --test modules/firewall/ui/src/ && npm --prefix modules/firewall/ui run build 2>&1 | tail -3`
   Expected: PASS.
-- [ ] **Step 5: Commit.** `feat(firewall-ui): destinos Dominio, País y App`
+- [x] **Step 5: Commit.** `feat(firewall-ui): destinos Dominio, País y App`
 - [ ] **Step 6: Revisión final** con haiku (≤15 líneas) y correcciones con TDD. Firewall `0.4.0`.
+
+## Cambios al ejecutar (2026-11-28)
+
+- **App:** el módulo es musl estático y no puede hacer `dlopen`. Con el visto bueno del usuario, nDPI se carga en un ayudante aparte, `netctl-dpi` (crate `modules/firewall/dpi`), compilado con glibc 2.31 en un contenedor (`tools/empaquetar-modulo.sh`). El módulo lo arranca mientras haya reglas de App (`main.rs`, `vigilar_dpi`) y le pregunta las apps (`netctl-dpi apps`).
+- ABI comprobada en las cabeceras de nDPI 4.14, 5.0 y 6.0. Debian 12/13 traen la 4.2 y openSUSE Leap la 4.0: ahí App sale desactivada con el motivo. Sin probar con una libndpi real (no está en Arch y no se pudo compilar aquí).
+- **Dominio:** los conjuntos no llevan `timeout` de nft; la caducidad de 1 h la lleva el módulo y cada 30 s rehace el conjunto con `flush` + `add element` (así sobrevive a recargas y al «deshacer» de 60 s).
+- `[paquetes]` del manifiesto sin libndpi: ninguna distro estable trae una versión soportada.
