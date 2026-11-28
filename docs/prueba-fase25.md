@@ -1,11 +1,12 @@
-# Prueba de la fase 2.5a: Firewall al estilo UniFi (Debian, openSUSE, Rocky)
+# Prueba de la fase 2.5: Firewall al estilo UniFi (Debian, openSUSE, Rocky)
 
 Prueba corta. Si algo sale distinto de lo que pone aquí, apunta el paso y lo que viste.
 
 ## 0. Publicar (una vez, en tu PC)
 
-El Firewall 0.2.0 necesita el núcleo 0.3.0: hay que publicar los dos y **reinstalar el
-núcleo** en cada servidor.
+El Firewall 0.4.0 necesita el núcleo 0.3.0: hay que publicar los dos y **reinstalar el
+núcleo** en cada servidor. Publicar el Firewall compila también el ayudante `netctl-dpi`
+en un contenedor (hace falta podman). minisign pide la contraseña de la clave.
 
 ```sh
 PATH=~/.cargo/bin:$PATH tools/publicar.sh nucleo
@@ -36,6 +37,33 @@ PATH=~/.cargo/bin:$PATH tools/publicar.sh firewall
 9. Conexión abierta cortada: SSH desde la red interna a un equipo de la DMZ, y crea
    Interna→DMZ «Bloquear», puerto 22, Estado «A elegir: Establecida». La sesión abierta se corta;
    **el panel y el SSH a esta máquina siguen funcionando**.
+
+## B. Lo nuevo de la 2.5b: Tabla de políticas, NAT y reenvío
+
+1. **Ajustes › Motor de políticas › Tabla de políticas** (primer icono): una sola lista con
+   Firewall, NAT y Reenvío de puertos. A la izquierda, filtros con su número (Tipo, Acción,
+   Protocolo, Origen, Destino); «Ver las de serie» enseña Permitir/Bloquear todo con candado.
+2. **Crear política** → bloque **Tipo**: Firewall / NAT / Reenvío de puertos.
+3. NAT → **SNAT**, tarjeta de salida la de internet, origen una IP de la LAN, IP nueva otra IP
+   de la máquina. Confirma: `nft list chain inet netctl postrouting` la enseña **antes** que
+   las `nat_…` automáticas.
+4. NAT → **DNAT** con puerto en un puerto que ya use un reenvío: no deja guardar y dice con
+   qué reenvío choca.
+5. Reenvío (solo en el router): campos como UniFi (Interfaz WAN, IP WAN, Puerto WAN, IP de
+   destino, Puerto de destino, Protocolo, Origen Cualquiera/Limitado). Si la WAN tiene IP
+   privada sale el aviso «está detrás de otro router»; con 100.64.x.x, el de CGNAT.
+6. Duplica un reenvío (sale en pausa) y actívalo: no deja, «choca con «…»».
+
+## C. Lo nuevo de la 2.5c: destinos Dominio, País y App
+
+1. Política Interna → **Externa**, destino **Dominio** `tiktok.com` y `www.tiktok.com`,
+   Bloquear. Confirma. En menos de 1 minuto `nft list set inet netctl dom<id>_4` tiene IPs
+   y desde la LAN no abre tiktok.com.
+2. Política Externa → Esta máquina, origen **País** (p. ej. China), Bloquear. La primera vez
+   sale «Descargando la base de países…»; en un minuto se aplica sola y
+   `nft list sets inet netctl` enseña `pais_cn_4`. Abajo pone «IP Geolocation by DB-IP».
+3. Destino **App**: en Debian/openSUSE sale desactivada con «La versión 4.x de nDPI no está
+   soportada» o «No está instalada la librería nDPI»: es lo esperado (hace falta nDPI ≥ 4.14).
 
 ## 1. Actualizar el núcleo (en cada distro)
 
