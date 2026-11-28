@@ -39,6 +39,47 @@ fn main() {
     c.reenvios.push(Reenvio { id: 8, nombre: "Juegos".into(), equipo: Direccion::Ip { red: "192.168.1.22/32".parse().unwrap() },
         protocolo: Protocolo::TcpUdp, externo: vec![RangoPuerto { desde: 27015, hasta: 27030 }], interno: None, wan: None,
         desde: vec![], caduca: None, loopback: true, activo: true, log: false, plantilla: None });
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "hotspot") {
+        c.interfaces.insert("eth2".into(), "hotspot".into());
+    }
+    if args.iter().any(|a| a == "nuevos") {
+        let base = |id: u64, o: &str, d: &str| Regla { id, nombre: format!("n{id}"), origen_zona: o.into(), destino_zona: d.into(), ..Default::default() };
+        let mut r = base(10, "interna", "externa");
+        r.origen = Direccion::Interfaz { iface: "eth1".into() };
+        r.protocolo = Protocolo::TcpUdp;
+        r.puertos_origen = Puertos::Lista(vec![RangoPuerto { desde: 1024, hasta: 65535 }]);
+        r.puertos = Puertos::Lista(vec![RangoPuerto::uno(53)]);
+        r.version_ip = VersionIp::V4;
+        r.horario = Horario::Semanal { dias: vec![0, 1, 2, 3, 4], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        c.reglas.push(r);
+        let mut r = base(11, "interna", "gateway");
+        r.origen = Direccion::Mac { mac: "aa:bb:cc:dd:ee:01".into() };
+        r.protocolo = Protocolo::Tcp;
+        r.puertos = Puertos::Lista(vec![RangoPuerto::uno(22)]);
+        r.estado = EstadoConexion::Elegir(vec![Estado::Establecida, Estado::Relacionada]);
+        c.reglas.push(r);
+        let mut r = base(12, "dmz", "externa");
+        r.protocolo = Protocolo::Otro;
+        r.numero_protocolo = 47;
+        r.accion = Accion::Permitir;
+        r.horario = Horario::AMedida(vec![
+            Tramo { dias: vec![5, 6], franja: Franja { desde: "22:00".into(), hasta: "06:00".into() } },
+            Tramo { dias: vec![2], franja: Franja { desde: "10:00".into(), hasta: "11:30".into() } },
+        ]);
+        c.reglas.push(r);
+        let mut r = base(13, "interna", "dmz");
+        r.version_ip = VersionIp::V6;
+        r.estado = EstadoConexion::SoloNuevas;
+        r.horario = Horario::UnaVez { inicio: 1_700_000_000, fin: 4_000_000_000 };
+        r.destino = Direccion::Interfaz { iface: "eth2".into() };
+        c.reglas.push(r);
+        let mut r = base(14, "gateway", "externa");
+        r.protocolo = Protocolo::Udp;
+        r.puertos_origen = Puertos::Grupo(2);
+        r.horario = Horario::Diario(Franja { desde: "00:00".into(), hasta: "23:59".into() });
+        c.reglas.push(r);
+    }
     let f = Fijas { panel: 8443, alcance_internet: false, ssh: 22, wg: vec![("wg0".into(), 51820)], ips_externas: vec!["203.0.113.4".parse().unwrap()] };
-    print!("{}", nft::generar(&c, &f, 0).unwrap());
+    print!("{}", nft::generar(&c, &f, 1_800_000_000).unwrap());
 }

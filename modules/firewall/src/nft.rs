@@ -37,19 +37,30 @@ fn puertos_txt(l: &[RangoPuerto]) -> String {
     }
 }
 
-/// `tcp dport X` / `udp dport X` / `meta l4proto { tcp, udp } th dport X`; `X` vacío = sin puerto.
-fn proto_txt(p: Protocolo, dport: Option<&str>) -> String {
-    match (p, dport) {
-        (Protocolo::Cualquiera, _) => String::new(),
-        (Protocolo::Icmp, _) => "meta l4proto { icmp, ipv6-icmp }".into(),
-        (Protocolo::Tcp, Some(x)) => format!("tcp dport {x}"),
-        (Protocolo::Udp, Some(x)) => format!("udp dport {x}"),
-        (Protocolo::TcpUdp, Some(x)) => format!("meta l4proto {{ tcp, udp }} th dport {x}"),
-        (Protocolo::Tcp, None) => "meta l4proto tcp".into(),
-        (Protocolo::Udp, None) => "meta l4proto udp".into(),
-        (Protocolo::TcpUdp, None) => "meta l4proto { tcp, udp }".into(),
-        // Provisional: la Task 4 lo escribe con su número.
-        (Protocolo::Otro, _) => String::new(),
+/// `tcp sport S dport X` / `udp …` / `meta l4proto { tcp, udp } th …` / `meta l4proto N`.
+/// `sport`/`dport` `None` = sin puerto.
+fn proto_txt(p: Protocolo, numero: u8, sport: Option<&str>, dport: Option<&str>) -> String {
+    let puertos = |pre: &str| {
+        let mut v = vec![];
+        if let Some(x) = sport {
+            v.push(format!("{pre} sport {x}"));
+        }
+        if let Some(x) = dport {
+            v.push(format!("{pre} dport {x}"));
+        }
+        v.join(" ")
+    };
+    let sin_puertos = sport.is_none() && dport.is_none();
+    match p {
+        Protocolo::Cualquiera => String::new(),
+        Protocolo::Icmp => "meta l4proto { icmp, ipv6-icmp }".into(),
+        Protocolo::Otro => format!("meta l4proto {numero}"),
+        Protocolo::Tcp if sin_puertos => "meta l4proto tcp".into(),
+        Protocolo::Udp if sin_puertos => "meta l4proto udp".into(),
+        Protocolo::TcpUdp if sin_puertos => "meta l4proto { tcp, udp }".into(),
+        Protocolo::Tcp => puertos("tcp"),
+        Protocolo::Udp => puertos("udp"),
+        Protocolo::TcpUdp => format!("meta l4proto {{ tcp, udp }} {}", puertos("th")),
     }
 }
 
@@ -75,6 +86,11 @@ fn elementos_grupo(g: &GrupoIp) -> (Vec<String>, Vec<String>) {
 fn dir_txt(c: &Config, d: &Direccion, lado: &str) -> Vec<(Fam, String)> {
     match d {
         Direccion::Cualquiera => vec![(Fam::Ambas, String::new())],
+        Direccion::Interfaz { iface } => {
+            let k = if lado == "saddr" { "iifname" } else { "oifname" };
+            vec![(Fam::Ambas, format!("{k} \"{iface}\""))]
+        }
+        Direccion::Mac { mac } => vec![(Fam::Ambas, format!("ether {lado} {mac}"))],
         Direccion::Grupo { id } => {
             let Some(g) = c.grupos_ip.iter().find(|g| g.id == *id) else { return vec![] };
             let (v4, v6) = elementos_grupo(g);
@@ -111,27 +127,97 @@ fn accion_txt(a: Accion) -> &'static str {
     }
 }
 
-/// Reglas del usuario de una casilla: `iif`/`oif` ya resueltos.
-fn reglas_usuario(t: &mut String, c: &Config, r: &Regla, iif: &str, oif: &str) {
-    let dport = match &r.puertos {
-        Puertos::Cualquiera => None,
-        Puertos::Lista(l) => Some(puertos_txt(l)),
+fn puertos_regla(c: &Config, p: &Puertos) -> Result<Option<String>, ()> {
+    match p {
+        Puertos::Cualquiera => Ok(None),
+        Puertos::Lista(l) => Ok(Some(puertos_txt(l))),
         Puertos::Grupo(id) => {
-            if !c.grupos_puertos.iter().any(|g| g.id == *id && !g.puertos.is_empty()) {
-                return;
+            if c.grupos_puertos.iter().any(|g| g.id == *id && !g.puertos.is_empty()) {
+                Ok(Some(format!("@gp{id}")))
+            } else {
+                Err(())
             }
-            Some(format!("@gp{id}"))
         }
+    }
+}
+
+const DIAS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+fn dias_txt(d: &[u8]) -> String {
+    let v: Vec<String> = d.iter().filter_map(|x| DIAS.get(*x as usize)).map(|x| format!("\"{x}\"")).collect();
+    format!("meta day {{ {} }}", v.join(", "))
+}
+
+fn franja_txt(f: &Franja) -> String {
+    format!("meta hour \"{}\"-\"{}\"", f.desde, f.hasta)
+}
+
+/// Condiciones de tiempo: una línea nft por elemento. `None` = la regla no se aplica (ya pasó).
+fn horario_txt(h: &Horario, ahora: u64) -> Option<Vec<String>> {
+    Some(match h {
+        Horario::Siempre => vec![String::new()],
+        Horario::Diario(f) => vec![franja_txt(f)],
+        Horario::Semanal { dias, franja } => vec![format!("{} {}", dias_txt(dias), franja_txt(franja))],
+        Horario::UnaVez { inicio, fin } => {
+            if *fin <= ahora {
+                return None;
+            }
+            vec![format!("meta time {inicio}-{fin}")]
+        }
+        Horario::AMedida(t) => t.iter().map(|t| format!("{} {}", dias_txt(&t.dias), franja_txt(&t.franja))).collect(),
+    })
+}
+
+fn estado_txt(e: &EstadoConexion) -> String {
+    match e {
+        EstadoConexion::Todas => String::new(),
+        EstadoConexion::SoloNuevas => "ct state new".into(),
+        EstadoConexion::Elegir(v) => {
+            let n: Vec<&str> = v
+                .iter()
+                .map(|e| match e {
+                    Estado::Nueva => "new",
+                    Estado::Establecida => "established",
+                    Estado::Relacionada => "related",
+                    Estado::Invalida => "invalid",
+                })
+                .collect();
+            if n.len() == 1 { format!("ct state {}", n[0]) } else { format!("ct state {{ {} }}", n.join(", ")) }
+        }
+    }
+}
+
+/// Reglas con un horario de una sola vez que ya terminó.
+pub fn avisos(c: &Config, ahora: u64) -> Vec<String> {
+    c.reglas
+        .iter()
+        .filter(|r| r.activa && matches!(r.horario, Horario::UnaVez { fin, .. } if fin <= ahora))
+        .map(|r| format!("La regla «{}» ya terminó su horario y no se aplica.", r.nombre))
+        .collect()
+}
+
+/// Reglas del usuario de una casilla: `iif`/`oif` ya resueltos.
+fn reglas_usuario(t: &mut String, c: &Config, r: &Regla, iif: &str, oif: &str, ahora: u64) {
+    let (Ok(dport), Ok(sport)) = (puertos_regla(c, &r.puertos), puertos_regla(c, &r.puertos_origen)) else { return };
+    let Some(tiempos) = horario_txt(&r.horario, ahora) else { return };
+    let proto = proto_txt(r.protocolo, r.numero_protocolo, sport.as_deref(), dport.as_deref());
+    let (version, fam) = match r.version_ip {
+        VersionIp::Ambas => ("", Fam::Ambas),
+        VersionIp::V4 => ("meta nfproto ipv4", Fam::V4),
+        VersionIp::V6 => ("meta nfproto ipv6", Fam::V6),
     };
-    let proto = proto_txt(r.protocolo, dport.as_deref());
+    let estado = estado_txt(&r.estado);
     let log = if r.log { format!("log prefix \"netctl r{} \"", r.id) } else { String::new() };
     let comentario = format!("comment \"r{}_{}\"", r.id, nombre_seguro(&r.nombre));
+    let casa = |a: Fam, b: Fam| a == Fam::Ambas || b == Fam::Ambas || a == b;
     for (fo, o) in dir_txt(c, &r.origen, "saddr") {
         for (fd, d) in dir_txt(c, &r.destino, "daddr") {
-            if fo != Fam::Ambas && fd != Fam::Ambas && fo != fd {
+            if !casa(fo, fd) || !casa(fo, fam) || !casa(fd, fam) {
                 continue;
             }
-            linea(t, &[iif, oif, &o, &d, &proto, "counter", &log, accion_txt(r.accion), &comentario]);
+            for tiempo in &tiempos {
+                linea(t, &[iif, oif, &o, &d, version, &proto, &estado, tiempo, "counter", &log, accion_txt(r.accion), &comentario]);
+            }
         }
     }
 }
@@ -179,11 +265,8 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
 
     // ---- input: hacia esta máquina
     t.push_str("\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n");
-    t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n\t\tiif lo accept\n");
-    t.push_str("\t\ticmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept\n");
-    t.push_str("\t\ticmp type { destination-unreachable, time-exceeded, parameter-problem } accept\n");
-    t.push_str("\t\tudp sport 67 udp dport 68 accept comment \"fija_dhcp\"\n");
-    t.push_str("\t\tip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment \"fija_dhcpv6\"\n");
+    t.push_str("\t\tiif lo accept\n");
+    // Panel y SSH antes que nada, para que ni las reglas que cortan conexiones abiertas los toquen.
     if f.alcance_internet {
         let _ = writeln!(t, "\t\ttcp dport {} accept comment \"fija_panel\"", f.panel);
     } else {
@@ -198,6 +281,18 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
     if !wg_ifaces.is_empty() {
         let _ = writeln!(t, "\t\tiifname {} tcp dport {} accept comment \"fija_ssh\"", lista_ifaces(&wg_ifaces), f.ssh);
     }
+    let al_gateway = |r: &&&Regla| gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona);
+    for r in reglas.iter().filter(al_gateway).filter(|r| r.corta_establecidas()) {
+        let ifs = c.ifaces_de(&r.origen_zona);
+        if !ifs.is_empty() {
+            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
+        }
+    }
+    t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n");
+    t.push_str("\t\ticmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert, destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept\n");
+    t.push_str("\t\ticmp type { destination-unreachable, time-exceeded, parameter-problem } accept\n");
+    t.push_str("\t\tudp sport 67 udp dport 68 accept comment \"fija_dhcp\"\n");
+    t.push_str("\t\tip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment \"fija_dhcpv6\"\n");
     for (i, p) in &f.wg {
         let _ = writeln!(t, "\t\tudp dport {p} accept comment \"fija_wg_{}\"", nombre_seguro(i));
     }
@@ -207,10 +302,16 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
         let l = lista_ifaces(&ext);
         let _ = writeln!(t, "\t\tiifname != {l} icmp type echo-request accept\n\t\tiifname != {l} icmpv6 type echo-request accept");
     }
-    for r in reglas.iter().filter(|r| gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona)) {
+    // Hotspot: a esta máquina solo DHCP y DNS (UniFi).
+    for (_, ifs) in zonas_con_ifaces.iter().filter(|(z, _)| z.tipo == TipoZona::Hotspot) {
+        let l = lista_ifaces(ifs);
+        let _ = writeln!(t, "\t\tiifname {l} udp dport {{ 53, 67, 547 }} accept comment \"fija_hotspot\"");
+        let _ = writeln!(t, "\t\tiifname {l} tcp dport 53 accept comment \"fija_hotspot\"");
+    }
+    for r in reglas.iter().filter(al_gateway).filter(|r| !r.corta_establecidas()) {
         let ifs = c.ifaces_de(&r.origen_zona);
         if !ifs.is_empty() {
-            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "");
+            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&ifs)), "", ahora);
         }
     }
     for g in &gateway {
@@ -223,13 +324,18 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
 
     // ---- forward: entre zonas
     t.push_str("\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;\n");
-    t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n\t\tct status dnat accept\n");
-    for r in reglas.iter().filter(|r| !gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona)) {
-        let (o, d) = (c.ifaces_de(&r.origen_zona), c.ifaces_de(&r.destino_zona));
-        if !o.is_empty() && !d.is_empty() {
-            reglas_usuario(&mut t, c, r, &format!("iifname {}", lista_ifaces(&o)), &format!("oifname {}", lista_ifaces(&d)));
+    let entre_zonas: Vec<&&Regla> = reglas.iter().filter(|r| !gateway.contains(&r.destino_zona) && !gateway.contains(&r.origen_zona)).collect();
+    let fwd = |t: &mut String, cortan: bool| {
+        for r in entre_zonas.iter().filter(|r| r.corta_establecidas() == cortan) {
+            let (o, d) = (c.ifaces_de(&r.origen_zona), c.ifaces_de(&r.destino_zona));
+            if !o.is_empty() && !d.is_empty() {
+                reglas_usuario(t, c, r, &format!("iifname {}", lista_ifaces(&o)), &format!("oifname {}", lista_ifaces(&d)), ahora);
+            }
         }
-    }
+    };
+    fwd(&mut t, true);
+    t.push_str("\t\tct state established,related accept\n\t\tct state invalid drop\n\t\tct status dnat accept\n");
+    fwd(&mut t, false);
     for (zo, io) in &zonas_con_ifaces {
         for (zd, id) in &zonas_con_ifaces {
             let a = if c.politica(&zo.id, &zd.id) == Politica::Permitir { "accept" } else { "drop" };
@@ -240,13 +346,18 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
 
     // ---- output: desde esta máquina
     t.push_str("\tchain output {\n\t\ttype filter hook output priority filter; policy accept;\n");
-    t.push_str("\t\tct state established,related accept\n");
-    for r in reglas.iter().filter(|r| gateway.contains(&r.origen_zona) && !gateway.contains(&r.destino_zona)) {
-        let ifs = c.ifaces_de(&r.destino_zona);
-        if !ifs.is_empty() {
-            reglas_usuario(&mut t, c, r, "", &format!("oifname {}", lista_ifaces(&ifs)));
+    let desde_gateway: Vec<&&Regla> = reglas.iter().filter(|r| gateway.contains(&r.origen_zona) && !gateway.contains(&r.destino_zona)).collect();
+    let salida = |t: &mut String, cortan: bool| {
+        for r in desde_gateway.iter().filter(|r| r.corta_establecidas() == cortan) {
+            let ifs = c.ifaces_de(&r.destino_zona);
+            if !ifs.is_empty() {
+                reglas_usuario(t, c, r, "", &format!("oifname {}", lista_ifaces(&ifs)), ahora);
+            }
         }
-    }
+    };
+    salida(&mut t, true);
+    t.push_str("\t\tct state established,related accept\n");
+    salida(&mut t, false);
     for g in &gateway {
         for (z, ifs) in &zonas_con_ifaces {
             if c.politica(g, &z.id) == Politica::Bloquear {
@@ -274,7 +385,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
             continue;
         }
         let wl = lista_ifaces(&wans);
-        let proto = proto_txt(r.protocolo, Some(&puertos_txt(&r.externo)));
+        let proto = proto_txt(r.protocolo, 0, None, Some(&puertos_txt(&r.externo)));
         let destino = match r.interno {
             Some(p) => format!("dnat ip to {ip}:{p}"),
             None => format!("dnat ip to {ip}"),
@@ -318,7 +429,7 @@ pub fn generar(c: &Config, f: &Fijas, ahora: u64) -> Result<String, Vec<String>>
                 Some(p) => p.to_string(),
                 None => puertos_txt(&r.externo),
             };
-            let proto_in = proto_txt(r.protocolo, Some(&interno));
+            let proto_in = proto_txt(r.protocolo, 0, None, Some(&interno));
             let mut l = String::new();
             linea(&mut l, &[&format!("iifname != {wl}"), &format!("ip daddr {ip}"), &proto_in, "ct status dnat masquerade", &comentario]);
             post.push_str(&l);
@@ -383,7 +494,8 @@ mod tests {
         let ssh = pos(input, "tcp dport 22 accept comment \"fija_ssh\"");
         let wg = pos(input, "udp dport 51820 accept comment \"fija_wg_wg0\"");
         let usuario = pos(input, "comment \"r1_");
-        assert!(est < panel && panel < usuario && ssh < usuario && wg < usuario);
+        // panel y SSH van antes incluso del «established» para que ninguna regla los corte
+        assert!(panel < est && ssh < est && panel < usuario && ssh < usuario && wg < usuario);
         // solo LAN/VPN: el panel solo desde redes privadas e interfaces wg
         assert!(input.contains("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16 } tcp dport 8443 accept"));
         assert!(input.contains("iifname { \"wg0\" } tcp dport 8443 accept"));
@@ -439,6 +551,122 @@ mod tests {
         c.reglas.push(r);
         let t = generado(&c);
         assert!(t.contains("iifname { \"eth0\" } ip saddr 198.51.100.0/24 tcp dport { 80, 8000-8100 } counter log prefix \"netctl r5 \" accept comment \"r5_Web_p_blica\""), "{t}");
+    }
+
+    fn con(r: Regla) -> String {
+        let mut c = router();
+        c.reglas.push(r);
+        generado(&c)
+    }
+
+    #[test]
+    fn v4_solo() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.version_ip = VersionIp::V4;
+        assert!(con(r).contains("oifname { \"eth0\" } meta nfproto ipv4 tcp dport 80 counter drop comment \"r9_"));
+    }
+
+    #[test]
+    fn puerto_origen() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.puertos_origen = Puertos::Lista(vec![RangoPuerto { desde: 1024, hasta: 65535 }]);
+        assert!(con(r.clone()).contains("tcp sport 1024-65535 tcp dport 80 counter drop"));
+        r.protocolo = Protocolo::TcpUdp;
+        assert!(con(r).contains("meta l4proto { tcp, udp } th sport 1024-65535 th dport 80 counter drop"));
+    }
+
+    #[test]
+    fn protocolo_otro() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.protocolo = Protocolo::Otro;
+        r.numero_protocolo = 47;
+        r.puertos = Puertos::Cualquiera;
+        assert!(con(r).contains("oifname { \"eth0\" } meta l4proto 47 counter drop"));
+    }
+
+    #[test]
+    fn origen_red_y_mac() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.origen = Direccion::Interfaz { iface: "eth1".into() };
+        assert!(con(r.clone()).contains("iifname { \"eth1\" } oifname { \"eth0\" } iifname \"eth1\" tcp dport 80"));
+        r.origen = Direccion::Mac { mac: "aa:bb:cc:dd:ee:ff".into() };
+        r.destino = Direccion::Interfaz { iface: "eth0".into() };
+        assert!(con(r).contains("ether saddr aa:bb:cc:dd:ee:ff oifname \"eth0\" tcp dport 80"));
+    }
+
+    #[test]
+    fn estado_solo_nuevas() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.estado = EstadoConexion::SoloNuevas;
+        assert!(con(r.clone()).contains("tcp dport 80 ct state new counter drop"));
+        r.estado = EstadoConexion::Elegir(vec![Estado::Nueva, Estado::Invalida]);
+        assert!(con(r).contains("tcp dport 80 ct state { new, invalid } counter drop"));
+    }
+
+    #[test]
+    fn horario_semanal() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.horario = Horario::Semanal { dias: vec![0, 4], franja: Franja { desde: "08:00".into(), hasta: "17:00".into() } };
+        assert!(con(r.clone()).contains("tcp dport 80 meta day { \"Monday\", \"Friday\" } meta hour \"08:00\"-\"17:00\" counter drop"));
+        r.horario = Horario::Diario(Franja { desde: "22:00".into(), hasta: "06:00".into() });
+        assert!(con(r.clone()).contains("meta hour \"22:00\"-\"06:00\" counter drop"));
+        r.horario = Horario::AMedida(vec![
+            Tramo { dias: vec![5, 6], franja: Franja { desde: "10:00".into(), hasta: "12:00".into() } },
+            Tramo { dias: vec![2], franja: Franja { desde: "18:00".into(), hasta: "19:00".into() } },
+        ]);
+        let t = con(r.clone());
+        assert!(t.contains("meta day { \"Saturday\", \"Sunday\" } meta hour \"10:00\"-\"12:00\""));
+        assert!(t.contains("meta day { \"Wednesday\" } meta hour \"18:00\"-\"19:00\""));
+        r.horario = Horario::UnaVez { inicio: 500, fin: 5000 };
+        assert!(con(r).contains("meta time 500-5000 counter drop"));
+    }
+
+    #[test]
+    fn horario_pasado_no_se_genera() {
+        let mut c = router();
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.nombre = "Examen".into();
+        r.horario = Horario::UnaVez { inicio: 10, fin: 999 };
+        c.reglas.push(r);
+        assert!(!generado(&c).contains("comment \"r9_"));
+        assert_eq!(avisos(&c, 1000), vec!["La regla «Examen» ya terminó su horario y no se aplica.".to_string()]);
+        assert!(avisos(&c, 500).is_empty());
+    }
+
+    #[test]
+    fn estado_establecida_no_pasa_de_las_fijas() {
+        let mut r = regla(9, "interna", "gateway", Accion::Bloquear);
+        r.puertos = Puertos::Lista(vec![RangoPuerto::uno(22)]);
+        r.estado = EstadoConexion::Elegir(vec![Estado::Establecida]);
+        let t = con(r);
+        let input = &t[pos(&t, "chain input")..pos(&t, "chain forward")];
+        let ssh = pos(input, "tcp dport 22 accept comment \"fija_ssh\"");
+        let panel = pos(input, "tcp dport 8443 accept comment \"fija_panel\"");
+        let regla = pos(input, "comment \"r9_");
+        let est = pos(input, "ct state established,related accept");
+        assert!(ssh < regla && panel < regla && regla < est, "{input}");
+    }
+
+    #[test]
+    fn establecidas_en_forward_antes() {
+        let mut r = regla(9, "interna", "externa", Accion::Bloquear);
+        r.estado = EstadoConexion::Elegir(vec![Estado::Establecida, Estado::Relacionada]);
+        let t = con(r);
+        let fwd = &t[pos(&t, "chain forward")..pos(&t, "chain output")];
+        assert!(pos(fwd, "comment \"r9_") < pos(fwd, "ct state established,related accept"), "{fwd}");
+    }
+
+    #[test]
+    fn hotspot_dhcp_y_dns() {
+        let mut c = router();
+        c.interfaces.insert("eth1".into(), "hotspot".into());
+        let t = generado(&c);
+        let input = &t[pos(&t, "chain input")..pos(&t, "chain forward")];
+        assert!(input.contains("iifname { \"eth1\" } udp dport { 53, 67, 547 } accept comment \"fija_hotspot\""), "{input}");
+        assert!(input.contains("iifname { \"eth1\" } tcp dport 53 accept comment \"fija_hotspot\""));
+        assert!(input.contains("iifname { \"eth1\" } counter drop comment \"p_hotspot_gateway\""));
+        let fwd = &t[pos(&t, "chain forward")..pos(&t, "chain output")];
+        assert!(fwd.contains("iifname { \"eth1\" } oifname { \"eth0\" } counter accept comment \"p_hotspot_externa\""));
     }
 
     #[test]

@@ -4,11 +4,34 @@ use std::process::Command;
 
 #[test]
 fn kernel_acepta_ejemplo() {
+    carga(&[]);
+}
+
+/// Reglas con todos los campos de la fase 2.5 (red, MAC, puertos de origen, protocolo por
+/// número, estado y horarios).
+#[test]
+fn campos_nuevos_cargan() {
+    carga(&["nuevos"]);
+}
+
+/// La zona Hotspot con tarjeta (sin tarjeta ya la lleva el ejemplo base).
+#[test]
+fn hotspot_con_tarjeta_carga() {
+    carga(&["hotspot"]);
+}
+
+#[test]
+fn hotspot_sin_tarjetas_carga() {
+    carga(&[]);
+}
+
+fn carga(args: &[&str]) {
     let script = Command::new(env!("CARGO"))
-        .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft"])
+        .args(["run", "-q", "-p", "netctl-mod-firewall", "--example", "volcar_nft", "--"])
+        .args(args)
         .output()
         .expect("cargo run");
-    assert!(script.status.success());
+    assert!(script.status.success(), "{}", String::from_utf8_lossy(&script.stderr));
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("ej.nft");
     std::fs::write(&f, &script.stdout).unwrap();
