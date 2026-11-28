@@ -71,7 +71,7 @@
         use:foco
       ></textarea>
     {:else if tipo === 'select'}
-      <select {id} name={nombre || undefined} bind:value={valor} disabled={desactivado} aria-invalid={!!error} use:foco>
+      <select {id} name={nombre || undefined} bind:value={valor} disabled={desactivado} aria-invalid={!!error} {oninput} use:foco>
         {#each opciones as o (o.valor)}
           <option value={o.valor}>{o.texto}</option>
         {/each}

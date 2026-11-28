@@ -465,9 +465,32 @@ async fn evento(State(e): E, Json(ev): Json<Evento>) -> Json<Value> {
 
 async fn equipos(State(e): E) -> Json<Value> {
     let v = leer::vecinos(&*e.sistema);
+    // Nombres que el usuario ya puso a equipos en reglas, reenvíos y grupos.
+    let mut nombres: HashMap<String, String> = HashMap::new();
+    if let Ok(Some(c)) = e.actual() {
+        let mut anotar = |d: &Direccion| {
+            if let Direccion::Equipo { mac, nombre, .. } = d
+                && !nombre.is_empty()
+            {
+                nombres.insert(mac.to_lowercase(), nombre.clone());
+            }
+        };
+        c.reglas.iter().for_each(|r| {
+            anotar(&r.origen);
+            anotar(&r.destino);
+        });
+        c.reenvios.iter().for_each(|r| {
+            anotar(&r.equipo);
+            r.desde.iter().for_each(&mut anotar);
+        });
+        c.grupos_ip.iter().for_each(|g| g.miembros.iter().for_each(&mut anotar));
+    }
     let l: Vec<Value> = v
         .iter()
-        .map(|x| json!({ "nombre": "", "ip": x.ip, "mac": x.mac, "red": x.iface, "conectado": x.conectado, "origen": "red" }))
+        .map(|x| {
+            let nombre = nombres.get(&x.mac).cloned().unwrap_or_default();
+            json!({ "nombre": nombre, "ip": x.ip, "mac": x.mac, "red": x.iface, "conectado": x.conectado, "origen": "red" })
+        })
         .collect();
     Json(Value::Array(l))
 }
@@ -523,8 +546,22 @@ async fn ver_config(State(e): E) -> R {
         None => Json(json!({ "configurado": false, "pendiente": Value::Null })).into_response(),
         Some(c) => {
             let f = e.fijas(&c);
+            let mut matriz = vec![];
+            for o in &c.zonas {
+                for d in &c.zonas {
+                    if o.tipo == TipoZona::Gateway && d.tipo == TipoZona::Gateway {
+                        continue;
+                    }
+                    let de_serie = politica_de_serie(o.tipo, d.tipo, o.id == d.id);
+                    let politica = c.politica(&o.id, &d.id);
+                    let reglas = c.reglas.iter().filter(|r| r.origen_zona == o.id && r.destino_zona == d.id).count();
+                    matriz.push(json!({ "origen": o.id, "destino": d.id, "politica": politica, "de_serie": de_serie,
+                        "cambiada": politica != de_serie, "reglas": reglas }));
+                }
+            }
             Json(json!({
                 "configurado": true,
+                "matriz": matriz,
                 "config": c,
                 "fijas": fijas_json(&f),
                 "panel": f.panel,

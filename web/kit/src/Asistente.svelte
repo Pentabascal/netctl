@@ -127,6 +127,11 @@
     background: var(--verde-tinte);
     color: var(--verde);
   }
+  .cuerpo {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
   .contador {
     margin: -8px 0 0;
     font-size: 12px;

@@ -385,3 +385,30 @@ async fn arranque_carga_confirmada() {
     e2.arrancar().await;
     assert_eq!(p.s.entradas("nft -f").len(), 1);
 }
+
+#[tokio::test]
+async fn config_trae_matriz() {
+    let p = configurado().await;
+    let regla = json!({"nombre": "Web", "origen_zona": "externa", "destino_zona": "gateway", "accion": "permitir"});
+    pedir(&p, "POST", "/reglas", Some(json!({"regla": regla, "revision": revision(&p).await}))).await;
+    pedir(&p, "PUT", "/politicas/interna/externa", Some(json!({"politica": "bloquear", "revision": revision(&p).await}))).await;
+    let (_, v) = pedir(&p, "GET", "/config", None).await;
+    let m = v["matriz"].as_array().unwrap();
+    assert_eq!(m.len(), 5 * 5 - 1, "todas las parejas menos gateway→gateway");
+    let c = |o: &str, d: &str| m.iter().find(|x| x["origen"] == o && x["destino"] == d).unwrap().clone();
+    assert_eq!(c("externa", "gateway")["politica"], "bloquear");
+    assert_eq!(c("externa", "gateway")["reglas"], 1);
+    assert_eq!(c("interna", "externa")["politica"], "bloquear");
+    assert_eq!(c("interna", "externa")["de_serie"], "permitir");
+    assert_eq!(c("interna", "externa")["cambiada"], true);
+}
+
+#[tokio::test]
+async fn equipos_usan_nombres_conocidos() {
+    let p = configurado().await;
+    pedir(&p, "POST", "/reenvios", Some(json!({"reenvio": reenvio_json(25565), "revision": revision(&p).await}))).await;
+    let (_, v) = pedir(&p, "GET", "/equipos", None).await;
+    let l = v.as_array().unwrap();
+    assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:01").unwrap()["nombre"], "PC Ana");
+    assert_eq!(l.iter().find(|e| e["mac"] == "aa:bb:cc:dd:ee:02").unwrap()["nombre"], "");
+}

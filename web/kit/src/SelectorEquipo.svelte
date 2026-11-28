@@ -73,7 +73,8 @@
     if (!t) return null;
     const r = leerEntrada(t, { redes, propias, conocidas });
     if (!r.ok) return /[\d:]/.test(t[0] ?? '') ? r : null;
-    if (soloIpv4 && JSON.stringify(r.dir).includes(':')) return { ok: false, error: 'Aquí solo vale IPv4.' };
+    const ip = r.dir.red ?? r.dir.desde ?? '';
+    if (soloIpv4 && ip.includes(':')) return { ok: false, error: 'Aquí solo vale IPv4.' };
     return r;
   });
 
@@ -248,7 +249,7 @@
               <span class="ico"><Icono nombre={o.e.origen === 'vpn' ? 'movil' : 'red'} tam={15} /></span>
               <span class="txt">
                 <b>{o.e.nombre || 'Equipo sin nombre'}</b>
-                <small>{o.e.ip}{#if o.e.mac} · <span class="mac">{o.e.mac}</span>{/if}{#if o.e.fabricante} · {o.e.fabricante}{/if}</small>
+                <small>{o.e.ip}{#if o.e.mac}{' · '}<span class="mac">{o.e.mac}</span>{/if}{#if o.e.fabricante}{' · '}{o.e.fabricante}{/if}</small>
               </span>
               <span
                 class="estado"

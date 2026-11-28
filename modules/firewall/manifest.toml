@@ -9,22 +9,22 @@ conflictos = ["firewalld", "ufw"]
 [[menu]]
 titulo = "Zonas"
 ruta = "zonas"
-icono = "escudo"
+icono = "cortafuegos"
 
 [[menu]]
 titulo = "Reenvío de puertos"
 ruta = "reenvios"
-icono = "flecha"
+icono = "globo"
 
 [[menu]]
 titulo = "Grupos"
 ruta = "grupos"
-icono = "lista"
+icono = "clientes"
 
 [[menu]]
 titulo = "Registro"
 ruta = "registro"
-icono = "registro"
+icono = "reloj"
 
 [paquetes]
 debian = ["nftables"]
